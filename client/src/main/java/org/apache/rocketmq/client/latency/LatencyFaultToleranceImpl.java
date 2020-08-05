@@ -37,6 +37,7 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
             faultItem.setCurrentLatency(currentLatency);
             faultItem.setStartTimestamp(System.currentTimeMillis() + notAvailableDuration);
 
+            // 将broker的FaultItem信息保存到faultItemTable中
             old = this.faultItemTable.putIfAbsent(name, faultItem);
             if (old != null) {
                 old.setCurrentLatency(currentLatency);
@@ -63,28 +64,34 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
     }
 
     @Override
+
     public String pickOneAtLeast() {
         final Enumeration<FaultItem> elements = this.faultItemTable.elements();
         List<FaultItem> tmpList = new LinkedList<FaultItem>();
+        // 将faultItemTable里的元素全放到list中
         while (elements.hasMoreElements()) {
             final FaultItem faultItem = elements.nextElement();
             tmpList.add(faultItem);
         }
 
         if (!tmpList.isEmpty()) {
+            // 先打乱再排序
             Collections.shuffle(tmpList);
 
             Collections.sort(tmpList);
 
             final int half = tmpList.size() / 2;
+            // list中只有一个broker时
             if (half <= 0) {
                 return tmpList.get(0).getName();
             } else {
+                // 根据当前线程的threadlocal中的whichItemWorst升序随机选出一个broker
                 final int i = this.whichItemWorst.getAndIncrement() % half;
                 return tmpList.get(i).getName();
             }
         }
 
+        // 如果list中没有broker，返回null
         return null;
     }
 
@@ -97,7 +104,9 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
     }
 
     class FaultItem implements Comparable<FaultItem> {
+        // broker name
         private final String name;
+        // 本次消息发送的延迟
         private volatile long currentLatency;
         private volatile long startTimestamp;
 
@@ -130,6 +139,8 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
             return 0;
         }
 
+        // 判断broker是否可用，startTimestamp在设置时 = 当前系统时间 + 预计不可用的时间，因此只需要比较当前时间和startTimestamp
+        // 当前时间已经超过预估不可用的时间，就视为available
         public boolean isAvailable() {
             return (System.currentTimeMillis() - startTimestamp) >= 0;
         }

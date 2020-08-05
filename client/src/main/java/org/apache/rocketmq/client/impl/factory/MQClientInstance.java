@@ -141,13 +141,17 @@ public class MQClientInstance {
 
         this.mQAdminImpl = new MQAdminImpl(this);
 
+        // 创建pullMessageService
         this.pullMessageService = new PullMessageService(this);
 
+        // 创建rebalanceService
         this.rebalanceService = new RebalanceService(this);
 
+        // 创建defaultMQProducer
         this.defaultMQProducer = new DefaultMQProducer(MixAll.CLIENT_INNER_PRODUCER_GROUP);
         this.defaultMQProducer.resetClientConfig(clientConfig);
 
+        // 创建Comsumer 统计服务(定时任务线程池)
         this.consumerStatsManager = new ConsumerStatsManager(this.scheduledExecutorService);
 
         log.info("Created a new client Instance, InstanceIndex:{}, ClientID:{}, ClientConfig:{}, ClientVersion:{}, SerializerType:{}",
@@ -221,25 +225,40 @@ public class MQClientInstance {
         return mqList;
     }
 
+    /**
+     * @Description: 真正启动producer client的方法
+     */
     public void start() throws MQClientException {
 
         synchronized (this) {
             switch (this.serviceState) {
                 case CREATE_JUST:
+                    // 先更新成启动失败的状态
                     this.serviceState = ServiceState.START_FAILED;
                     // If not specified,looking address from name server
+                    // 如果没有配置NameServer地址, 则程序会向一个Http地址发送请求来获取NameServer地址, 从默认服务器地址中获取（该地址不可改变）
                     if (null == this.clientConfig.getNamesrvAddr()) {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
                     // Start request-response channel
+                    // 启动请求响应通道，核心是Netty客户端服务
                     this.mQClientAPIImpl.start();
                     // Start various schedule tasks
+                    // 设置定时任务
+                    // 1.每隔2分钟去检测namesrv的变化
+                    // 2.每隔30s从nameserver获取topic的路由信息有没有发生变化，或者说有没有新的topic路由信息
+                    // 3.每隔30s清除下线的broker
+                    // 4.每隔5s持久化所有的消费进度
+                    // 5.每隔1分钟检测线程池大小是否需要调整
                     this.startScheduledTask();
                     // Start pull service
+                    // 启动拉取消息服务
                     this.pullMessageService.start();
                     // Start rebalance service
+                    // 启动Rebalance负载均衡服务
                     this.rebalanceService.start();
                     // Start push service
+                    // 启动MQClientInstance内置的producer
                     this.defaultMQProducer.getDefaultMQProducerImpl().start(false);
                     log.info("the client factory [{}] start OK", this.clientId);
                     this.serviceState = ServiceState.RUNNING;
@@ -259,6 +278,8 @@ public class MQClientInstance {
                 @Override
                 public void run() {
                     try {
+                        // 如果 NameServer 地址默认没配置，则定时向一个Http地址获取
+                        // 每隔2分钟去检测namesrv的变化
                         MQClientInstance.this.mQClientAPIImpl.fetchNameServerAddr();
                     } catch (Exception e) {
                         log.error("ScheduledTask fetchNameServerAddr exception", e);
@@ -272,6 +293,8 @@ public class MQClientInstance {
             @Override
             public void run() {
                 try {
+                    // 定时的从 NameServer 中获取 Topic、broker、queue 相关信息
+                    // 每隔30s从nameserver获取topic的路由信息有没有发生变化，或者说有没有新的topic路由信息
                     MQClientInstance.this.updateTopicRouteInfoFromNameServer();
                 } catch (Exception e) {
                     log.error("ScheduledTask updateTopicRouteInfoFromNameServer exception", e);
@@ -284,6 +307,7 @@ public class MQClientInstance {
             @Override
             public void run() {
                 try {
+                    // 每隔30s清除下线的broker, 并向所有的Broker 发送心跳数据
                     MQClientInstance.this.cleanOfflineBroker();
                     MQClientInstance.this.sendHeartbeatToAllBrokerWithLock();
                 } catch (Exception e) {
@@ -297,6 +321,7 @@ public class MQClientInstance {
             @Override
             public void run() {
                 try {
+                    // 每隔5s持久化所有的消费进度, 持久化 Consumer 端消费每个 queue的 offset 数据
                     MQClientInstance.this.persistAllConsumerOffset();
                 } catch (Exception e) {
                     log.error("ScheduledTask persistAllConsumerOffset exception", e);
@@ -309,6 +334,7 @@ public class MQClientInstance {
             @Override
             public void run() {
                 try {
+                    // 每隔1分钟检测线程池大小是否需要调整
                     MQClientInstance.this.adjustThreadPool();
                 } catch (Exception e) {
                     log.error("ScheduledTask adjustThreadPool exception", e);
@@ -602,6 +628,7 @@ public class MQClientInstance {
         }
     }
 
+    // 从name server拉取topic对应的路由/队列信息
     public boolean updateTopicRouteInfoFromNameServer(final String topic, boolean isDefault,
         DefaultMQProducer defaultMQProducer) {
         try {

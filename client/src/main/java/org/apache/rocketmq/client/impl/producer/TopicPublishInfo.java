@@ -72,6 +72,7 @@ public class TopicPublishInfo {
         } else {
             int index = this.sendWhichQueue.getAndIncrement();
             for (int i = 0; i < this.messageQueueList.size(); i++) {
+                // 轮询计算
                 int pos = Math.abs(index++) % this.messageQueueList.size();
                 if (pos < 0)
                     pos = 0;
@@ -84,11 +85,17 @@ public class TopicPublishInfo {
         }
     }
 
+    // 默认轮询算法，index递增取余
     public MessageQueue selectOneMessageQueue() {
+        // ThreadLocal生成线程独有的随机数并取绝对值
+        // 每个线程都在threadLocal中维护自己在mq队列中的index
+        // 同一线程连续调用返回的是递增的整形
         int index = this.sendWhichQueue.getAndIncrement();
+        // 根据size取模确定要获取的mq在messageQueueList的位置
         int pos = Math.abs(index) % this.messageQueueList.size();
         if (pos < 0)
             pos = 0;
+        // 返回目标mq
         return this.messageQueueList.get(pos);
     }
 
