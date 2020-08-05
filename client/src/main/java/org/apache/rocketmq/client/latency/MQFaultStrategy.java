@@ -56,6 +56,7 @@ public class MQFaultStrategy {
     }
 
     public MessageQueue selectOneMessageQueue(final TopicPublishInfo tpInfo, final String lastBrokerName) {
+        // 是否启用故障延迟机制，默认false
         if (this.sendLatencyFaultEnable) {
             try {
                 int index = tpInfo.getSendWhichQueue().getAndIncrement();
@@ -64,14 +65,22 @@ public class MQFaultStrategy {
                     if (pos < 0)
                         pos = 0;
                     MessageQueue mq = tpInfo.getMessageQueueList().get(pos);
+                    // 判断该Broker是否可用，不可用则进行第二部分的逻辑
                     if (latencyFaultTolerance.isAvailable(mq.getBrokerName())) {
+                        // 正常情况下，非失败重试，lastBrokerName应该为null，直接返回队列
+                        // 失败重试的情况，如果和选择的队列是上次重试是一样的，则返回
                         if (null == lastBrokerName || mq.getBrokerName().equals(lastBrokerName))
                             return mq;
                     }
                 }
 
+                // 延迟容错机制觉得lastBrokerName这个broker不可用
+                // 选取一个容错的broker
                 final String notBestBroker = latencyFaultTolerance.pickOneAtLeast();
+
+                // writeQueueNums决定了producer发送消息的MessageQueue共有几个
                 int writeQueueNums = tpInfo.getQueueIdByBroker(notBestBroker);
+                // 如果有可用的mq，更新mq的信息
                 if (writeQueueNums > 0) {
                     final MessageQueue mq = tpInfo.selectOneMessageQueue();
                     if (notBestBroker != null) {
@@ -80,6 +89,7 @@ public class MQFaultStrategy {
                     }
                     return mq;
                 } else {
+                    // 没有可用来发送消息的mq，移除该broker的缓存信息
                     latencyFaultTolerance.remove(notBestBroker);
                 }
             } catch (Exception e) {
@@ -94,6 +104,7 @@ public class MQFaultStrategy {
 
     public void updateFaultItem(final String brokerName, final long currentLatency, boolean isolation) {
         if (this.sendLatencyFaultEnable) {
+            // 根据延时预测出一个对应的不可用的时间，这个不可用时间内broker并不可用，超过这个时间isAvailable才为true
             long duration = computeNotAvailableDuration(isolation ? 30000 : currentLatency);
             this.latencyFaultTolerance.updateFaultItem(brokerName, currentLatency, duration);
         }

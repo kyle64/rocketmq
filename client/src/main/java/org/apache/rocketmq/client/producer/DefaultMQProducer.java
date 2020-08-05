@@ -321,7 +321,9 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     public SendResult send(
         Message msg) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
         Validators.checkMessage(msg, this);
+        // 设置消息的topic
         msg.setTopic(withNamespace(msg.getTopic()));
+        // 调用defaultMQProducerImpl的send方法
         return this.defaultMQProducerImpl.send(msg);
     }
 
