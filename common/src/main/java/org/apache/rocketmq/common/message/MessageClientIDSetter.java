@@ -119,11 +119,13 @@ public class MessageClientIDSetter {
     }
 
     private static byte[] createUniqIDBuffer() {
+        // 4byte的int，2byte的short
         ByteBuffer buffer = ByteBuffer.allocate(4 + 2);
         long current = System.currentTimeMillis();
         if (current >= nextStartTime) {
             setStartTime(current);
         }
+        // int是时间戳，short是计数器count，以此生成uniqueId
         buffer.putInt((int) (System.currentTimeMillis() - startTime));
         buffer.putShort((short) COUNTER.getAndIncrement());
         return buffer.array();

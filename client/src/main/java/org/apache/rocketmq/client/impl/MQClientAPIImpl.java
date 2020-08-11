@@ -458,6 +458,7 @@ public class MQClientAPIImpl {
             }
         } else {
             if (sendSmartMsg || msg instanceof MessageBatch) {
+                // 批量发送消息
                 SendMessageRequestHeaderV2 requestHeaderV2 = SendMessageRequestHeaderV2.createSendMessageRequestHeaderV2(requestHeader);
                 request = RemotingCommand.createRequestCommand(msg instanceof MessageBatch ? RequestCode.SEND_BATCH_MESSAGE : RequestCode.SEND_MESSAGE_V2, requestHeaderV2);
             } else {
@@ -476,6 +477,7 @@ public class MQClientAPIImpl {
                 if (timeoutMillis < costTimeAsync) {
                     throw new RemotingTooMuchRequestException("sendMessage call timeout");
                 }
+                // 异步发送
                 this.sendMessageAsync(addr, brokerName, msg, timeoutMillis - costTimeAsync, request, sendCallback, topicPublishInfo, instance,
                     retryTimesWhenSendFailed, times, context, producer);
                 return null;
@@ -484,6 +486,7 @@ public class MQClientAPIImpl {
                 if (timeoutMillis < costTimeSync) {
                     throw new RemotingTooMuchRequestException("sendMessage call timeout");
                 }
+                // 同步发送
                 return this.sendMessageSync(addr, brokerName, msg, timeoutMillis - costTimeSync, request);
             default:
                 assert false;
@@ -500,8 +503,10 @@ public class MQClientAPIImpl {
         final long timeoutMillis,
         final RemotingCommand request
     ) throws RemotingException, MQBrokerException, InterruptedException {
+        // 同步发送
         RemotingCommand response = this.remotingClient.invokeSync(addr, request, timeoutMillis);
         assert response != null;
+        // 处理发送消息的response
         return this.processSendResponse(brokerName, msg, response);
     }
 
@@ -520,14 +525,17 @@ public class MQClientAPIImpl {
         final DefaultMQProducerImpl producer
     ) throws InterruptedException, RemotingException {
         final long beginStartTime = System.currentTimeMillis();
+        // netty异步请求，异步相应出发回调
         this.remotingClient.invokeAsync(addr, request, timeoutMillis, new InvokeCallback() {
             @Override
             public void operationComplete(ResponseFuture responseFuture) {
+                // 回调处理逻辑
                 long cost = System.currentTimeMillis() - beginStartTime;
                 RemotingCommand response = responseFuture.getResponseCommand();
                 if (null == sendCallback && response != null) {
 
                     try {
+                        // 处理消息发送结果
                         SendResult sendResult = MQClientAPIImpl.this.processSendResponse(brokerName, msg, response);
                         if (context != null && sendResult != null) {
                             context.setSendResult(sendResult);
@@ -561,6 +569,7 @@ public class MQClientAPIImpl {
                             retryTimesWhenSendFailed, times, e, context, false, producer);
                     }
                 } else {
+                    // 各种异常处理
                     producer.updateFaultItem(brokerName, System.currentTimeMillis() - responseFuture.getBeginTimestamp(), true);
                     if (!responseFuture.isSendRequestOK()) {
                         MQClientException ex = new MQClientException("send request failed", responseFuture.getCause());
@@ -666,6 +675,7 @@ public class MQClientAPIImpl {
             }
         }
 
+        // 解码响应response header
         SendMessageResponseHeader responseHeader =
                 (SendMessageResponseHeader) response.decodeCommandCustomHeader(SendMessageResponseHeader.class);
 
@@ -675,6 +685,7 @@ public class MQClientAPIImpl {
             topic = NamespaceUtil.withoutNamespace(topic, this.clientConfig.getNamespace());
         }
 
+        // 发送消息的queue
         MessageQueue messageQueue = new MessageQueue(topic, brokerName, responseHeader.getQueueId());
 
         String uniqMsgId = MessageClientIDSetter.getUniqID(msg);
@@ -685,6 +696,7 @@ public class MQClientAPIImpl {
             }
             uniqMsgId = sb.toString();
         }
+        // 创建发送结果实例
         SendResult sendResult = new SendResult(sendStatus,
                 uniqMsgId,
                 responseHeader.getMsgId(), messageQueue, responseHeader.getQueueOffset());

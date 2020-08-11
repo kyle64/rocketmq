@@ -629,6 +629,7 @@ public class MQClientInstance {
     }
 
     // 从name server拉取topic对应的路由/队列信息
+    // TODO: 2020/8/6
     public boolean updateTopicRouteInfoFromNameServer(final String topic, boolean isDefault,
         DefaultMQProducer defaultMQProducer) {
         try {
