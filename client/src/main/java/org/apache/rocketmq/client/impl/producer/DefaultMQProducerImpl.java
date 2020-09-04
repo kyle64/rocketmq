@@ -592,7 +592,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             for (; times < timesTotal; times++) {
                 // 第一次进入时，mq = null
                 String lastBrokerName = null == mq ? null : mq.getBrokerName();
-                // 选择要topic在对应broker中需要发送消息的mq队列
+                // 根据topic负载均衡算法选择要topic在对应broker中需要发送消息的mq队列
                 MessageQueue mqSelected = this.selectOneMessageQueue(topicPublishInfo, lastBrokerName);
                 if (mqSelected != null) {
                     mq = mqSelected;
@@ -748,7 +748,6 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     }
 
     // 核心发送逻辑
-    // TODO: 2020/8/6
     private SendResult sendKernelImpl(final Message msg,
         final MessageQueue mq,
         final CommunicationMode communicationMode,

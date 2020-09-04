@@ -39,11 +39,15 @@ public class MappedFileQueue {
 
     private final int mappedFileSize;
 
+    // 保存所有分配的MappedFile的List
     private final CopyOnWriteArrayList<MappedFile> mappedFiles = new CopyOnWriteArrayList<MappedFile>();
 
     private final AllocateMappedFileService allocateMappedFileService;
 
+    // 上次刷盘的位置，保存刷盘位置, 该字段的值是在Broker启动时，恢复状态时计算出来的。
+    // 正常情况下，是CommmitLog在磁盘上最后一个MappedFile中最后一个正常消息的偏移量
     private long flushedWhere = 0;
+    // 上次提交的位置，写入到PageCache的位置， 在Broker启动时，值和flushedWhere计算逻辑一致。
     private long committedWhere = 0;
 
     private volatile long storeTimestamp = 0;
@@ -193,6 +197,7 @@ public class MappedFileQueue {
 
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
         long createOffset = -1;
+        // 尝试获取最新的mappedFile
         MappedFile mappedFileLast = getLastMappedFile();
 
         if (mappedFileLast == null) {
@@ -203,13 +208,17 @@ public class MappedFileQueue {
             createOffset = mappedFileLast.getFileFromOffset() + this.mappedFileSize;
         }
 
+        // 新建mappedFile
         if (createOffset != -1 && needCreate) {
+            // 计算出下一个文件的偏移offset并得到文件路径
             String nextFilePath = this.storePath + File.separator + UtilAll.offset2FileName(createOffset);
+            // 计算出下下个文件的偏移offset并得到文件路径
             String nextNextFilePath = this.storePath + File.separator
                 + UtilAll.offset2FileName(createOffset + this.mappedFileSize);
             MappedFile mappedFile = null;
 
             if (this.allocateMappedFileService != null) {
+                // 在创建分配完下个MappedFile后，还会将下下个MappedFile预先创建并保存至请求队列中等待下次获取时直接返回
                 mappedFile = this.allocateMappedFileService.putRequestAndReturnMappedFile(nextFilePath,
                     nextNextFilePath, this.mappedFileSize);
             } else {
@@ -427,7 +436,9 @@ public class MappedFileQueue {
         MappedFile mappedFile = this.findMappedFileByOffset(this.flushedWhere, this.flushedWhere == 0);
         if (mappedFile != null) {
             long tmpTimeStamp = mappedFile.getStoreTimestamp();
+            // 调用mappedFile的刷盘方法
             int offset = mappedFile.flush(flushLeastPages);
+            // 计算并更新下次刷盘的位置
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.flushedWhere;
             this.flushedWhere = where;
@@ -441,8 +452,10 @@ public class MappedFileQueue {
 
     public boolean commit(final int commitLeastPages) {
         boolean result = true;
+        // 根据提交位置committedWhere查找应该写入的mappedFile
         MappedFile mappedFile = this.findMappedFileByOffset(this.committedWhere, this.committedWhere == 0);
         if (mappedFile != null) {
+            // 提交操作
             int offset = mappedFile.commit(commitLeastPages);
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.committedWhere;
@@ -472,6 +485,7 @@ public class MappedFileQueue {
                         this.mappedFileSize,
                         this.mappedFiles.size());
                 } else {
+                    // 计算mappedFile下标
                     int index = (int) ((offset / this.mappedFileSize) - (firstMappedFile.getFileFromOffset() / this.mappedFileSize));
                     MappedFile targetFile = null;
                     try {

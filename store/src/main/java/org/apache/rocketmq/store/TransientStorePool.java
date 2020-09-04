@@ -45,6 +45,7 @@ public class TransientStorePool {
 
     /**
      * It's a heavy init method.
+     * 因为这里需要申请多个堆外ByteBuffer
      */
     public void init() {
         for (int i = 0; i < poolSize; i++) {
@@ -52,8 +53,10 @@ public class TransientStorePool {
 
             final long address = ((DirectBuffer) byteBuffer).address();
             Pointer pointer = new Pointer(address);
+            // 锁住内存，避免操作系统虚拟内存的切换
             LibC.INSTANCE.mlock(pointer, new NativeLong(fileSize));
 
+            // 将预分配的ByteBuffer放到队列中
             availableBuffers.offer(byteBuffer);
         }
     }
@@ -66,13 +69,19 @@ public class TransientStorePool {
         }
     }
 
+    // 使用完毕之后归还ByteBuffer
     public void returnBuffer(ByteBuffer byteBuffer) {
+        // ByteBuffer各下标复位
         byteBuffer.position(0);
         byteBuffer.limit(fileSize);
+        // 放入队头，等待下次重新被分配
         this.availableBuffers.offerFirst(byteBuffer);
     }
 
+    // 从池中获取ByteBuffer
     public ByteBuffer borrowBuffer() {
+        // 非阻塞弹出队头元素，如果没有启用暂存池，则不会调用init方法，队列中就没有元素，这里返回null
+        // 其次，如果队列中所有元素都被借用出去，队列也为空，此时也会返回null
         ByteBuffer buffer = availableBuffers.pollFirst();
         if (availableBuffers.size() < poolSize * 0.4) {
             log.warn("TransientStorePool only remain {} sheets.", availableBuffers.size());

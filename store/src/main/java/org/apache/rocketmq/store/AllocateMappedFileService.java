@@ -97,6 +97,7 @@ public class AllocateMappedFileService extends ServiceThread {
         AllocateRequest result = this.requestTable.get(nextFilePath);
         try {
             if (result != null) {
+                // 等待run方法分配完成
                 boolean waitOK = result.getCountDownLatch().await(waitTimeOut, TimeUnit.MILLISECONDS);
                 if (!waitOK) {
                     log.warn("create mmap timeout " + result.getFilePath() + " " + result.getFileSize());
@@ -131,6 +132,13 @@ public class AllocateMappedFileService extends ServiceThread {
         }
     }
 
+    /**
+     * @Description: broker启动时就创建并运行
+     *
+     * @date 2020/9/1 下午4:35
+     * @param
+     * @return void
+     */
     public void run() {
         log.info(this.getServiceName() + " service started");
 
@@ -147,6 +155,7 @@ public class AllocateMappedFileService extends ServiceThread {
         boolean isSuccess = false;
         AllocateRequest req = null;
         try {
+            // 从队列获取创建请求，这里的队列为优先队列，里面的AllocateRequest分配请求已经根据文件大小、文件偏移进行过排序
             req = this.requestQueue.take();
             AllocateRequest expectedRequest = this.requestTable.get(req.getFilePath());
             if (null == expectedRequest) {
@@ -160,19 +169,24 @@ public class AllocateMappedFileService extends ServiceThread {
                 return true;
             }
 
+            // 如果取得的分配任务尚没有持有MappedFile对象，则进行分配
             if (req.getMappedFile() == null) {
                 long beginTime = System.currentTimeMillis();
 
                 MappedFile mappedFile;
+                // 如果启用了暂存池TransientStorePool，则进行存储池分配
                 if (messageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
                     try {
+                        // 这里有个ServiceLoader扩展，用户可通过ServiceLoader使用自定义的MappedFile实现
                         mappedFile = ServiceLoader.load(MappedFile.class).iterator().next();
                         mappedFile.init(req.getFilePath(), req.getFileSize(), messageStore.getTransientStorePool());
                     } catch (RuntimeException e) {
                         log.warn("Use default implementation.");
+                        // 从TransientStorePool堆外内存池中获取相应的DirectByteBuffer来构建MappedFile
                         mappedFile = new MappedFile(req.getFilePath(), req.getFileSize(), messageStore.getTransientStorePool());
                     }
                 } else {
+                    // 使用Mmap的方式来构建MappedFile实例
                     mappedFile = new MappedFile(req.getFilePath(), req.getFileSize());
                 }
 
@@ -184,10 +198,13 @@ public class AllocateMappedFileService extends ServiceThread {
                 }
 
                 // pre write mappedFile
+                // 如果配置了MappedFile预热，则进行MappedFile预热
                 if (mappedFile.getFileSize() >= this.messageStore.getMessageStoreConfig()
                     .getMappedFileSizeCommitLog()
                     &&
                     this.messageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {
+                    // 具体的预热方法不具体介绍，简单的说就是通过加载分配空间的每个内存页进行写入，
+                    // 使分配的ByteBuffer加载到内存中，并和暂存池一样，避免其被操作系统换出
                     mappedFile.warmMappedFile(this.messageStore.getMessageStoreConfig().getFlushDiskType(),
                         this.messageStore.getMessageStoreConfig().getFlushLeastPagesWhenWarmMapedFile());
                 }
