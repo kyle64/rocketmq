@@ -61,16 +61,19 @@ public abstract class NettyRemotingAbstract {
 
     /**
      * Semaphore to limit maximum number of on-going one-way requests, which protects system memory footprint.
+     * 限制单程请求的最大数量，保护系统内存占用
      */
     protected final Semaphore semaphoreOneway;
 
     /**
      * Semaphore to limit maximum number of on-going asynchronous requests, which protects system memory footprint.
+     * 限制异步请求的最大数量，保护系统内存占用
      */
     protected final Semaphore semaphoreAsync;
 
     /**
      * This map caches all on-going requests.
+     * 保存请求id（opaque）与ResponseFuture之间关系的map
      */
     protected final ConcurrentMap<Integer /* opaque */, ResponseFuture> responseTable =
         new ConcurrentHashMap<Integer, ResponseFuture>(256);
@@ -78,17 +81,20 @@ public abstract class NettyRemotingAbstract {
     /**
      * This container holds all processors per request code, aka, for each incoming request, we may look up the
      * responding processor in this map to handle the request.
+     * 请求code与请求处理器之间的关系
      */
     protected final HashMap<Integer/* request code */, Pair<NettyRequestProcessor, ExecutorService>> processorTable =
         new HashMap<Integer, Pair<NettyRequestProcessor, ExecutorService>>(64);
 
     /**
      * Executor to feed netty events to user defined {@link ChannelEventListener}.
+     * Netty事件的处理器
      */
     protected final NettyEventExecutor nettyEventExecutor = new NettyEventExecutor();
 
     /**
      * The default request processor to use in case there is no exact match in {@link #processorTable} per request code.
+     * 默认的请求处理器
      */
     protected Pair<NettyRequestProcessor, ExecutorService> defaultRequestProcessor;
 
@@ -386,6 +392,7 @@ public abstract class NettyRemotingAbstract {
     /**
      * <p>
      * This method is periodically invoked to scan and expire deprecated request.
+     * 定期清理responseTable中过期的请求
      * </p>
      */
     public void scanResponseTable() {
@@ -481,7 +488,7 @@ public abstract class NettyRemotingAbstract {
             // 存放请求和响应的映射关系map，在处理发送响应时会用到这个映射
             this.responseTable.put(opaque, responseFuture);
             try {
-                // 发送请求
+                // 发送请求，并异步监听响应结果
                 channel.writeAndFlush(request).addListener(new ChannelFutureListener() {
                     @Override
                     public void operationComplete(ChannelFuture f) throws Exception {
@@ -584,8 +591,16 @@ public abstract class NettyRemotingAbstract {
         }
     }
 
+    /**
+     * @Description: Netty事件执行器
+     *
+     * 当Netty Handler中的事件发生时(Close、Connect、Exception、IDLE等)会创建一个对应的NettyEvent，
+     * 调用NettyEventExecutor的putNettyEvent方法将此事件添加到阻塞队列中
+     */
     class NettyEventExecutor extends ServiceThread {
+        // 使用阻塞队列存储NettyEvent，包括Close、Connect、Exception、IDLE
         private final LinkedBlockingQueue<NettyEvent> eventQueue = new LinkedBlockingQueue<NettyEvent>();
+        // 事件队列大小不能根据参数调整，这里是10000
         private final int maxSize = 10000;
 
         public void putNettyEvent(final NettyEvent event) {
@@ -600,6 +615,7 @@ public abstract class NettyRemotingAbstract {
         public void run() {
             log.info(this.getServiceName() + " service started");
 
+            // ChannelEventListener监听处理各种Netty事件
             final ChannelEventListener listener = NettyRemotingAbstract.this.getChannelEventListener();
 
             while (!this.isStopped()) {

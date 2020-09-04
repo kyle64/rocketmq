@@ -42,25 +42,40 @@ import org.apache.rocketmq.store.util.LibC;
 import sun.nio.ch.DirectBuffer;
 
 public class MappedFile extends ReferenceResource {
+    // 常量，内存页大小，4KB
     public static final int OS_PAGE_SIZE = 1024 * 4;
     protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
     private static final AtomicLong TOTAL_MAPPED_VIRTUAL_MEMORY = new AtomicLong(0);
 
     private static final AtomicInteger TOTAL_MAPPED_FILES = new AtomicInteger(0);
+    // 上次写的位置
     protected final AtomicInteger wrotePosition = new AtomicInteger(0);
+    // 已经提交的位置
     protected final AtomicInteger committedPosition = new AtomicInteger(0);
+    // 已经刷盘的位置
     private final AtomicInteger flushedPosition = new AtomicInteger(0);
     protected int fileSize;
+    // 该MappedFile文件对应的channel
     protected FileChannel fileChannel;
     /**
      * Message will put to here first, and then reput to FileChannel if writeBuffer is not null.
+     * 如果启用了TransientStorePool，则writeBuffer为从暂时存储池中借用
+     * 的buffer，此时存储对象（比如消息等）会先写入该writeBuffer，然后
+     * commit到fileChannel，最后对fileChannel进行flush刷盘
      */
     protected ByteBuffer writeBuffer = null;
     protected TransientStorePool transientStorePool = null;
     private String fileName;
+    // 映射的起始偏移量
+    // 拿commitlog文件来举例, 下面有很多个文件夹(假设为1KB, 默认是1G大小),
+    // 第一个文件名为00000000000000000000, 第二个文件名为00000000000000001024,
+    // 那么第一个文件的fileFromOffset就是0, 第二个文件的fileFromOffset就是1024
     private long fileFromOffset;
     private File file;
+    // 通过fileChannel.map得到的可读写的内存映射buffer，如果没有启用
+    // TransientStorePool则写数据时会写到该缓冲中，刷盘时直接调用该
+    // 映射buffer的force函数，而不需要进行commit操作
     private MappedByteBuffer mappedByteBuffer;
     private volatile long storeTimestamp = 0;
     private boolean firstCreateInQueue = false;
@@ -158,6 +173,10 @@ public class MappedFile extends ReferenceResource {
         ensureDirOK(this.file.getParent());
 
         try {
+            // 内存映射MMAP
+            // mmap 把文件映射到用户空间里的虚拟内存，省去了从内核缓冲区复制到用户空间的过程，
+            // 文件中的位置在虚拟内存中有了对应的地址，可以像操作内存一样操作这个文件，相当于已经把整个文件放入内存，
+            // 但在真正使用到这些数据前却不会消耗物理内存，也不会有读写磁盘的操作，只有真正使用这些数据时
             this.fileChannel = new RandomAccessFile(this.file, "rw").getChannel();
             this.mappedByteBuffer = this.fileChannel.map(MapMode.READ_WRITE, 0, fileSize);
             TOTAL_MAPPED_VIRTUAL_MEMORY.addAndGet(fileSize);
@@ -200,12 +219,21 @@ public class MappedFile extends ReferenceResource {
         assert messageExt != null;
         assert cb != null;
 
+        // 当前写入MappedFile文件的位置
         int currentPos = this.wrotePosition.get();
 
         if (currentPos < this.fileSize) {
+            // writeBuffer 本身也是一个DirectBuffer, 默认大小1G 和 MappedFile大小相同
+            // 每次slice 都会得到position == 0, limit 和 capacity 等于1G 的影子ByteBuffer
+            // 新的buffer内部的array和writeBuffer共享，position、limit等参数独立
             ByteBuffer byteBuffer = writeBuffer != null ? writeBuffer.slice() : this.mappedByteBuffer.slice();
+            // 通过设置position， 使得上面获取的影子ByteBuffer写入时不会覆盖原有数据
+            // 只能从底层真实的ByteBuffer的position处开始写数据
+            // 因为 writeBuffer 和 mappedByteBuffer 的position一直保持不变
+            // 所以设置position的方法不会抛出异常
             byteBuffer.position(currentPos);
             AppendMessageResult result;
+            // 调用AppendMessageCallback（通过commitLog内部类实现）
             if (messageExt instanceof MessageExtBrokerInner) {
                 result = cb.doAppend(this.getFileFromOffset(), byteBuffer, this.fileSize - currentPos, (MessageExtBrokerInner) messageExt);
             } else if (messageExt instanceof MessageExtBatch) {
@@ -267,9 +295,11 @@ public class MappedFile extends ReferenceResource {
 
     /**
      * @return The current flushed position
+     * 返回当前刷盘的位置
      */
     public int flush(final int flushLeastPages) {
         if (this.isAbleToFlush(flushLeastPages)) {
+            // 表示资源是否可用的引用次数
             if (this.hold()) {
                 int value = getReadPosition();
 
@@ -278,6 +308,7 @@ public class MappedFile extends ReferenceResource {
                     if (writeBuffer != null || this.fileChannel.position() != 0) {
                         this.fileChannel.force(false);
                     } else {
+                        // 调用NIO的MappedByteBuffer.force()写入磁盘内存映射文件
                         this.mappedByteBuffer.force();
                     }
                 } catch (Throwable e) {
@@ -297,10 +328,12 @@ public class MappedFile extends ReferenceResource {
     public int commit(final int commitLeastPages) {
         if (writeBuffer == null) {
             //no need to commit data to file channel, so just regard wrotePosition as committedPosition.
+            // writeBuffer 为 NULL 表示消息是直接写入MappedByteBuffer的
             return this.wrotePosition.get();
         }
         if (this.isAbleToCommit(commitLeastPages)) {
             if (this.hold()) {
+                // 将writeBuffer中的数据写入到FileChannel中
                 commit0(commitLeastPages);
                 this.release();
             } else {
@@ -323,6 +356,7 @@ public class MappedFile extends ReferenceResource {
 
         if (writePos - this.committedPosition.get() > 0) {
             try {
+                // 创建writerBuffer共享缓存区
                 ByteBuffer byteBuffer = writeBuffer.slice();
                 byteBuffer.position(lastCommittedPosition);
                 byteBuffer.limit(writePos);
@@ -336,17 +370,22 @@ public class MappedFile extends ReferenceResource {
     }
 
     private boolean isAbleToFlush(final int flushLeastPages) {
+        // 上次刷盘的位置
         int flush = this.flushedPosition.get();
+        // 当前的可读的位置，有valid data的position
         int write = getReadPosition();
 
+        // 如果当前文件写满了，就需要刷盘
         if (this.isFull()) {
             return true;
         }
 
+        // 是否满足最少刷盘页数
         if (flushLeastPages > 0) {
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= flushLeastPages;
         }
 
+        // 只要上次刷盘后有新的数据写入，就进行刷盘
         return write > flush;
     }
 

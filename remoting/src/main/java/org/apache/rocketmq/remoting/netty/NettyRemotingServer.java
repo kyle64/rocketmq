@@ -86,7 +86,12 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
     // sharable handlers
     private HandshakeHandler handshakeHandler;
     private NettyEncoder encoder;
+    // NettyConnectManageHandler将Netty中的事件(Close、Connect、Exception、IDLE状态)封装为NettyEvent对象，
+    // 并将NettyEvent对象添加到阻塞队列中，NettyEventExecutor会异步处理Netty事件
     private NettyConnectManageHandler connectionManageHandler;
+    // NettyServerHandler是仅仅处理业务数据，
+    // 请求的业务数据会被封装为RemotingCommand对象, 根据RemotingCommand对象中的code(RequestCode)来找到对应的处理器进行处理
+    // 处理器在对应的线程池中异步执行业务处理
     private NettyServerHandler serverHandler;
 
     public NettyRemotingServer(final NettyServerConfig nettyServerConfig) {
