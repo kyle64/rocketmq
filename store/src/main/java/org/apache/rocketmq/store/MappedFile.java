@@ -46,9 +46,16 @@ public class MappedFile extends ReferenceResource {
     public static final int OS_PAGE_SIZE = 1024 * 4;
     protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    // jvm映射虚拟内存总大小
     private static final AtomicLong TOTAL_MAPPED_VIRTUAL_MEMORY = new AtomicLong(0);
 
+    // jvm中mmap数量
     private static final AtomicInteger TOTAL_MAPPED_FILES = new AtomicInteger(0);
+
+    // wrotePosition 是写入到MappedByteBuffer的位置
+    // commitedPosition 是启用了TransientStorePool后，写入到DirectByteBuffer的位置。
+    // flushedPosition 是最后刷盘的位置
+    // wrotePosition >= commitedPosition >= flushedPosition
     // 上次写的位置
     protected final AtomicInteger wrotePosition = new AtomicInteger(0);
     // 已经提交的位置
@@ -416,6 +423,9 @@ public class MappedFile extends ReferenceResource {
         return this.fileSize == this.wrotePosition.get();
     }
 
+    /**
+     * 从mappedByteBuffer读取数据，指定大小
+     */
     public SelectMappedBufferResult selectMappedBuffer(int pos, int size) {
         int readPosition = getReadPosition();
         if ((pos + size) <= readPosition) {
@@ -583,6 +593,9 @@ public class MappedFile extends ReferenceResource {
         this.firstCreateInQueue = firstCreateInQueue;
     }
 
+    /**
+     * 调用C的mlock给内存加锁
+     */
     public void mlock() {
         final long beginTime = System.currentTimeMillis();
         final long address = ((DirectBuffer) (this.mappedByteBuffer)).address();

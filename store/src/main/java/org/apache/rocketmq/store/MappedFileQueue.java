@@ -156,6 +156,7 @@ public class MappedFileQueue {
             Arrays.sort(files);
             for (File file : files) {
 
+                // 对构成的Commit Log的所有磁盘文件，创建对应的MappedFile
                 if (file.length() != this.mappedFileSize) {
                     log.warn(file + "\t" + file.length()
                         + " length not matched message store config value, please check it manually");
@@ -163,6 +164,7 @@ public class MappedFileQueue {
                 }
 
                 try {
+                    // 申请虚拟内存空间，但是并没有读取磁盘文件
                     MappedFile mappedFile = new MappedFile(file.getPath(), mappedFileSize);
 
                     mappedFile.setWrotePosition(this.mappedFileSize);
