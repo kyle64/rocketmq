@@ -20,13 +20,22 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * @Description: 索引文件头信息40个字节的数据组成
+ */
 public class IndexHeader {
     public static final int INDEX_HEADER_SIZE = 40;
+    // 8位long类型，索引文件构建第一个索引的消息落在broker的时间
     private static int beginTimestampIndex = 0;
+    // 8位long类型，索引文件构建最后一个索引消息落broker时间
     private static int endTimestampIndex = 8;
+    //  8位long类型，索引文件构建第一个索引的消息commitLog偏移量
     private static int beginPhyoffsetIndex = 16;
+    // 8位long类型，索引文件构建最后一个索引消息commitLog偏移量
     private static int endPhyoffsetIndex = 24;
+    // 4位int类型，构建索引占用的槽位数
     private static int hashSlotcountIndex = 32;
+    // 4位int类型，索引文件中构建的索引个数
     private static int indexCountIndex = 36;
     private final ByteBuffer byteBuffer;
     private AtomicLong beginTimestamp = new AtomicLong(0);

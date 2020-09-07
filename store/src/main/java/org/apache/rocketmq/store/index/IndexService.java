@@ -40,8 +40,11 @@ public class IndexService {
      */
     private static final int MAX_TRY_IDX_CREATE = 3;
     private final DefaultMessageStore defaultMessageStore;
+    // 哈希槽个数
     private final int hashSlotNum;
+    // 存储索引的最大个数
     private final int indexNum;
+    // 索引文件indexFile存储的路径
     private final String storePath;
     private final ArrayList<IndexFile> indexFileList = new ArrayList<IndexFile>();
     private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
@@ -163,6 +166,7 @@ public class IndexService {
         try {
             this.readWriteLock.readLock().lock();
             if (!this.indexFileList.isEmpty()) {
+                // 从最新的index文件开始向前找
                 for (int i = this.indexFileList.size(); i > 0; i--) {
                     IndexFile f = this.indexFileList.get(i - 1);
                     boolean lastFile = i == this.indexFileList.size();
@@ -171,8 +175,10 @@ public class IndexService {
                         indexLastUpdatePhyoffset = f.getEndPhyOffset();
                     }
 
+                    // 看index是否符合请求的时间范围
                     if (f.isTimeMatched(begin, end)) {
 
+                        // 从文件中读取index中的offset
                         f.selectPhyOffset(phyOffsets, buildKey(topic, key), maxNum, begin, end, lastFile);
                     }
 
@@ -199,8 +205,10 @@ public class IndexService {
     }
 
     public void buildIndex(DispatchRequest req) {
+        // 获取或者新建当前可写入的index file
         IndexFile indexFile = retryGetAndCreateIndexFile();
         if (indexFile != null) {
+            // 获取当前indexFile中记录的最大offset
             long endPhyOffset = indexFile.getEndPhyOffset();
             DispatchRequest msg = req;
             String topic = msg.getTopic();
@@ -209,6 +217,7 @@ public class IndexService {
                 return;
             }
 
+            // 事物消息
             final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
             switch (tranType) {
                 case MessageSysFlag.TRANSACTION_NOT_TYPE:
@@ -219,6 +228,7 @@ public class IndexService {
                     return;
             }
 
+            // 单条消息
             if (req.getUniqKey() != null) {
                 indexFile = putKey(indexFile, msg, buildKey(topic, req.getUniqKey()));
                 if (indexFile == null) {
@@ -227,6 +237,7 @@ public class IndexService {
                 }
             }
 
+            // 批量消息
             if (keys != null && keys.length() > 0) {
                 String[] keyset = keys.split(MessageConst.KEY_SEPARATOR);
                 for (int i = 0; i < keyset.length; i++) {

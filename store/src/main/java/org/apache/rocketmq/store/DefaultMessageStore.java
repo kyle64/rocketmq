@@ -177,30 +177,38 @@ public class DefaultMessageStore implements MessageStore {
 
     /**
      * @throws IOException
+     * 初始化的时候加载消息文件
      */
     public boolean load() {
         boolean result = true;
 
         try {
+            // 判断是否上次是否是正常退出。 正常退出是没有abort文件的
             boolean lastExitOK = !this.isTempFileExist();
             log.info("last shutdown {}", lastExitOK ? "normally" : "abnormally");
 
+            // 先加载延迟消息
             if (null != scheduleMessageService) {
                 result = result && this.scheduleMessageService.load();
             }
 
             // load Commit Log
+            // 加载 Commit Log 文件，其实是通过 MappedFileQueue加载每一个MappedFile
             result = result && this.commitLog.load();
 
             // load Consume Queue
+            // 加载 Commit Log 文件
             result = result && this.loadConsumeQueue();
 
             if (result) {
+                // 初始化checkpoint，checkpoint文件记录了CommitLog，ConsumeQueue，IndexFile的刷盘时间点
                 this.storeCheckpoint =
                     new StoreCheckpoint(StorePathConfigHelper.getStoreCheckpoint(this.messageStoreConfig.getStorePathRootDir()));
 
+                // 加载索引文件
                 this.indexService.load(lastExitOK);
 
+                // 进行状态恢复， 底层还是通过
                 this.recover(lastExitOK);
 
                 log.info("load over, and the max phy offset = {}", this.getMaxPhyOffset());
@@ -940,6 +948,7 @@ public class DefaultMessageStore implements MessageStore {
         long lastQueryMsgTime = end;
 
         for (int i = 0; i < 3; i++) {
+            // 查询所有index的offset
             QueryOffsetResult queryOffsetResult = this.indexService.queryOffset(topic, key, maxNum, begin, lastQueryMsgTime);
             if (queryOffsetResult.getPhyOffsets().isEmpty()) {
                 break;
@@ -972,6 +981,7 @@ public class DefaultMessageStore implements MessageStore {
 //                    }
 
                     if (match) {
+                        // 根据index的offset偏移量，从commitLog中查找消息
                         SelectMappedBufferResult result = this.commitLog.getData(offset, false);
                         if (result != null) {
                             int size = result.getByteBuffer().getInt(0);
@@ -1368,12 +1378,14 @@ public class DefaultMessageStore implements MessageStore {
 
     private boolean loadConsumeQueue() {
         File dirLogic = new File(StorePathConfigHelper.getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()));
+        // ConsumeQueue目录下的topic目录列表
         File[] fileTopicList = dirLogic.listFiles();
         if (fileTopicList != null) {
 
             for (File fileTopic : fileTopicList) {
                 String topic = fileTopic.getName();
 
+                // topic name目录中有这个topic的queue ids
                 File[] fileQueueIdList = fileTopic.listFiles();
                 if (fileQueueIdList != null) {
                     for (File fileQueueId : fileQueueIdList) {
@@ -1383,12 +1395,14 @@ public class DefaultMessageStore implements MessageStore {
                         } catch (NumberFormatException e) {
                             continue;
                         }
+                        // 创建ConsumeQueue对象
                         ConsumeQueue logic = new ConsumeQueue(
                             topic,
                             queueId,
                             StorePathConfigHelper.getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()),
                             this.getMessageStoreConfig().getMappedFileSizeConsumeQueue(),
                             this);
+                        // 将ConsumeQueue对象放到本地的缓存中
                         this.putConsumeQueue(topic, queueId, logic);
                         if (!logic.load()) {
                             return false;
@@ -1404,8 +1418,10 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     private void recover(final boolean lastExitOK) {
+        // 恢复消费队列状态
         long maxPhyOffsetOfConsumeQueue = this.recoverConsumeQueue();
 
+        // 恢复Commit Log 状态
         if (lastExitOK) {
             this.commitLog.recoverNormally(maxPhyOffsetOfConsumeQueue);
         } else {
@@ -1554,6 +1570,7 @@ public class DefaultMessageStore implements MessageStore {
         }, 6, TimeUnit.SECONDS);
     }
 
+    // 用来构建队列
     class CommitLogDispatcherBuildConsumeQueue implements CommitLogDispatcher {
 
         @Override
@@ -1571,6 +1588,7 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    // 用来构建消息索引
     class CommitLogDispatcherBuildIndex implements CommitLogDispatcher {
 
         @Override
@@ -1908,6 +1926,7 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         private boolean isCommitLogAvailable() {
+            // 只要reput的位置后有新写入的消息，则可以构建消费队列和消息索引
             return this.reputFromOffset < DefaultMessageStore.this.commitLog.getMaxOffset();
         }
 
