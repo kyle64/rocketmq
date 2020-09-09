@@ -24,6 +24,8 @@ import org.apache.rocketmq.common.message.MessageQueue;
 
 /**
  * Computer room Hashing queue algorithm, such as Alipay logic room
+ * 基于机房分配算法
+ * 直接指定基于机房消费的策略。这种方式具有强约定性，比如broker名称按照机房的名称进行拼接，在算法中通过约定解析进行分配。
  */
 public class AllocateMessageQueueByMachineRoom implements AllocateMessageQueueStrategy {
     private Set<String> consumeridcs;
