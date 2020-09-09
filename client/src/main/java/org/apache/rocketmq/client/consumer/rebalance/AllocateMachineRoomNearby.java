@@ -29,6 +29,7 @@ import org.apache.rocketmq.logging.InternalLogger;
 /**
  * An allocate strategy proxy for based on machine room nearside priority. An actual allocate strategy can be
  * specified.
+ * 基于机房临近原则算法
  *
  * If any consumer is alive in a machine room, the message queue of the broker which is deployed in the same machine
  * should only be allocated to those. Otherwise, those message queues can be shared along all consumers since there are
@@ -77,8 +78,10 @@ public class AllocateMachineRoomNearby implements AllocateMessageQueueStrategy {
         }
 
         //group mq by machine room
+        // 将MQ队列按照 机房进行分组
         Map<String/*machine room */, List<MessageQueue>> mr2Mq = new TreeMap<String, List<MessageQueue>>();
         for (MessageQueue mq : mqAll) {
+            // 获取mq所在的机房
             String brokerMachineRoom = machineRoomResolver.brokerDeployIn(mq);
             if (StringUtils.isNoneEmpty(brokerMachineRoom)) {
                 if (mr2Mq.get(brokerMachineRoom) == null) {
@@ -91,6 +94,7 @@ public class AllocateMachineRoomNearby implements AllocateMessageQueueStrategy {
         }
 
         //group consumer by machine room
+        // 将消费者 按照机房进行分组
         Map<String/*machine room */, List<String/*clientId*/>> mr2c = new TreeMap<String, List<String>>();
         for (String cid : cidAll) {
             String consumerMachineRoom = machineRoomResolver.consumerDeployIn(cid);
@@ -107,6 +111,7 @@ public class AllocateMachineRoomNearby implements AllocateMessageQueueStrategy {
         List<MessageQueue> allocateResults = new ArrayList<MessageQueue>();
 
         //1.allocate the mq that deploy in the same machine room with the current consumer
+        // 将当前consumer所在的机房中的mq按照选择的算法分配
         String currentMachineRoom = machineRoomResolver.consumerDeployIn(currentCID);
         List<MessageQueue> mqInThisMachineRoom = mr2Mq.remove(currentMachineRoom);
         List<String> consumerInThisMachineRoom = mr2c.get(currentMachineRoom);
@@ -115,6 +120,7 @@ public class AllocateMachineRoomNearby implements AllocateMessageQueueStrategy {
         }
 
         //2.allocate the rest mq to each machine room if there are no consumer alive in that machine room
+        // 将剩下的mq分配到其他机房
         for (String machineRoom : mr2Mq.keySet()) {
             if (!mr2c.containsKey(machineRoom)) { // no alive consumer in the corresponding machine room, so all consumers share these queues
                 allocateResults.addAll(allocateMessageQueueStrategy.allocate(consumerGroup, currentCID, mr2Mq.get(machineRoom), cidAll));

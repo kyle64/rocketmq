@@ -25,6 +25,7 @@ import org.apache.rocketmq.common.message.MessageQueue;
 
 /**
  * Cycle average Hashing queue algorithm
+ * 基于环形平均算法
  */
 public class AllocateMessageQueueAveragelyByCircle implements AllocateMessageQueueStrategy {
     private final InternalLogger log = ClientLogger.getLog();
@@ -51,6 +52,7 @@ public class AllocateMessageQueueAveragelyByCircle implements AllocateMessageQue
             return result;
         }
 
+        // 环形平均分配队列
         int index = cidAll.indexOf(currentCID);
         for (int i = index; i < mqAll.size(); i++) {
             if (i % cidAll.size() == index) {

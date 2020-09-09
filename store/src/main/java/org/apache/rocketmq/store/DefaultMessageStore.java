@@ -197,7 +197,7 @@ public class DefaultMessageStore implements MessageStore {
             result = result && this.commitLog.load();
 
             // load Consume Queue
-            // 加载 Commit Log 文件
+            // 加载ConsumeQueue文件
             result = result && this.loadConsumeQueue();
 
             if (result) {
@@ -1943,6 +1943,7 @@ public class DefaultMessageStore implements MessageStore {
                     break;
                 }
 
+                // 读取commitLog数据
                 SelectMappedBufferResult result = DefaultMessageStore.this.commitLog.getData(reputFromOffset);
                 if (result != null) {
                     try {
@@ -1955,6 +1956,7 @@ public class DefaultMessageStore implements MessageStore {
 
                             if (dispatchRequest.isSuccess()) {
                                 if (size > 0) {
+                                    // 保存索引数据到consumeQueue
                                     DefaultMessageStore.this.doDispatch(dispatchRequest);
 
                                     if (BrokerRole.SLAVE != DefaultMessageStore.this.getMessageStoreConfig().getBrokerRole()
