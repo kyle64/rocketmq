@@ -244,6 +244,7 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
             throw new MQClientException("maxNums <= 0", null);
         }
 
+        // 检查Topic是否订阅，若是没有就新建一条订阅数据保存在rebalanceImpl的subscriptionInner中
         this.subscriptionAutomatically(mq.getTopic());
 
         int sysFlag = PullSysFlag.buildSysFlag(false, block, true, false);
@@ -251,6 +252,7 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
         long timeoutMillis = block ? this.defaultMQPullConsumer.getConsumerTimeoutMillisWhenSuspend() : timeout;
 
         boolean isTagType = ExpressionType.isTagType(subscriptionData.getExpressionType());
+        // 从broker拉取消息
         PullResult pullResult = this.pullAPIWrapper.pullKernelImpl(
             mq,
             subscriptionData.getSubString(),
@@ -265,6 +267,7 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
             CommunicationMode.SYNC,
             null
         );
+        // 对pullresult进行处理
         this.pullAPIWrapper.processPullResult(mq, pullResult, subscriptionData);
         //If namespace is not null , reset Topic without namespace.
         this.resetTopic(pullResult.getMsgFoundList());
@@ -528,6 +531,16 @@ public class DefaultMQPullConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     * @Description: pull拉取消息调用
+     *
+     * @date 2020/9/10 下午11:12
+     * @param mq 需要从那个mq中拉取消息
+     * @param subExpression SubscriptionData中的subString
+     * @param offset 拉去消息的偏移量offset
+     * @param maxNums 最大拉取的消息数目
+     * @return org.apache.rocketmq.client.consumer.PullResult
+     */
     public PullResult pullBlockIfNotFound(MessageQueue mq, String subExpression, long offset, int maxNums)
         throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
         SubscriptionData subscriptionData = getSubscriptionData(mq, subExpression);

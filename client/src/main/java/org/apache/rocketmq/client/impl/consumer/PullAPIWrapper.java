@@ -70,12 +70,14 @@ public class PullAPIWrapper {
     public PullResult processPullResult(final MessageQueue mq, final PullResult pullResult,
         final SubscriptionData subscriptionData) {
         PullResultExt pullResultExt = (PullResultExt) pullResult;
-
+        // 更新缓存pullFromWhichNodeTable中消息队列拉取消息Broker编号的为broker返回的suggestBrokerId建议id
         this.updatePullFromWhichNode(mq, pullResultExt.getSuggestWhichBrokerId());
         if (PullStatus.FOUND == pullResult.getPullStatus()) {
+            // 调用MessageDecoder的decodes方法，将CommitLog格式的消息数据解析消息
             ByteBuffer byteBuffer = ByteBuffer.wrap(pullResultExt.getMessageBinary());
             List<MessageExt> msgList = MessageDecoder.decodes(byteBuffer);
 
+            // 根据订阅信息消息tagCode匹配合适消息
             List<MessageExt> msgListFilterAgain = msgList;
             if (!subscriptionData.getTagsSet().isEmpty() && !subscriptionData.isClassFilterMode()) {
                 msgListFilterAgain = new ArrayList<MessageExt>(msgList.size());
@@ -88,6 +90,7 @@ public class PullAPIWrapper {
                 }
             }
 
+            // 如果有钩子方法就执行钩子的filterMessage
             if (this.hasHook()) {
                 FilterMessageContext filterMessageContext = new FilterMessageContext();
                 filterMessageContext.setUnitMode(unitMode);
@@ -154,9 +157,14 @@ public class PullAPIWrapper {
         final CommunicationMode communicationMode,
         final PullCallback pullCallback
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
+        // 通过findBrokerAddressInSubscribe方法查找关于消息队列的Broker信息
+        // 这里就根据brokerAddrTable表查找该BrokerID对应的Broker的地址信息，以及是否是slave
+        // 封装为FindBrokerResult返回
         FindBrokerResult findBrokerResult =
             this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(),
                 this.recalculatePullFromWhichNode(mq), false);
+        // 若是没有找到Broker的路由信息，则通过updateTopicRouteInfoFromNameServer方法向NameServer请求更新
+        // 更新完成后再调用findBrokerAddressInSubscribe方法查找
         if (null == findBrokerResult) {
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(mq.getTopic());
             findBrokerResult =
@@ -179,6 +187,7 @@ public class PullAPIWrapper {
                 sysFlagInner = PullSysFlag.clearCommitOffsetFlag(sysFlagInner);
             }
 
+            // 封装请求消息头PullMessageRequestHeader
             PullMessageRequestHeader requestHeader = new PullMessageRequestHeader();
             requestHeader.setConsumerGroup(this.consumerGroup);
             requestHeader.setTopic(mq.getTopic());
