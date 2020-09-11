@@ -728,10 +728,10 @@ public class MQClientAPIImpl {
             case ONEWAY:
                 assert false;
                 return null;
-            case ASYNC:
+            case ASYNC: // 异步拉取消息
                 this.pullMessageAsync(addr, request, timeoutMillis, pullCallback);
                 return null;
-            case SYNC:
+            case SYNC: // 同步拉取消息
                 return this.pullMessageSync(addr, request, timeoutMillis);
             default:
                 assert false;
@@ -778,13 +778,16 @@ public class MQClientAPIImpl {
         final RemotingCommand request,
         final long timeoutMillis
     ) throws RemotingException, InterruptedException, MQBrokerException {
+        // 由netty发送pull请求到broker
         RemotingCommand response = this.remotingClient.invokeSync(addr, request, timeoutMillis);
         assert response != null;
         return this.processPullResponse(response);
     }
 
+    // 处理拉取消息的响应
     private PullResult processPullResponse(
         final RemotingCommand response) throws MQBrokerException, RemotingCommandException {
+        // 设置pull status
         PullStatus pullStatus = PullStatus.NO_NEW_MSG;
         switch (response.getCode()) {
             case ResponseCode.SUCCESS:
@@ -804,9 +807,11 @@ public class MQClientAPIImpl {
                 throw new MQBrokerException(response.getCode(), response.getRemark());
         }
 
+        // 解码响应信息
         PullMessageResponseHeader responseHeader =
             (PullMessageResponseHeader) response.decodeCommandCustomHeader(PullMessageResponseHeader.class);
 
+        // 封装成PullResultExt对象返回
         return new PullResultExt(pullStatus, responseHeader.getNextBeginOffset(), responseHeader.getMinOffset(),
             responseHeader.getMaxOffset(), null, responseHeader.getSuggestWhichBrokerId(), response.getBody());
     }

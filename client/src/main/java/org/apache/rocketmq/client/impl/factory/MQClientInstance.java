@@ -226,7 +226,7 @@ public class MQClientInstance {
     }
 
     /**
-     * @Description: 真正启动producer client的方法
+     * @Description: 真正启动producer/consumer client的方法
      */
     public void start() throws MQClientException {
 
