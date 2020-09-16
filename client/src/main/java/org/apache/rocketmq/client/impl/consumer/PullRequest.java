@@ -18,10 +18,15 @@ package org.apache.rocketmq.client.impl.consumer;
 
 import org.apache.rocketmq.common.message.MessageQueue;
 
+// 拉取的请求信息
 public class PullRequest {
+    // 所属组
     private String consumerGroup;
+    // 消费的mq
     private MessageQueue messageQueue;
+    // 消费进度
     private ProcessQueue processQueue;
+    // 要拉取的offset偏移
     private long nextOffset;
     private boolean lockedFirst = false;
 

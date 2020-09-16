@@ -28,8 +28,10 @@ public class ConsumeConcurrentlyContext {
      * -1,no retry,put into DLQ directly<br>
      * 0,broker control retry frequency<br>
      * >0,client control retry frequency
+     * 重试的延迟级别,-1:不重试;0:由broker控制;>0由客户端控制
      */
     private int delayLevelWhenNextConsume = 0;
+    // 消息列表最后一个正常消费的消息索引
     private int ackIndex = Integer.MAX_VALUE;
 
     public ConsumeConcurrentlyContext(MessageQueue messageQueue) {

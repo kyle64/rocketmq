@@ -27,7 +27,7 @@ public class SimpleProducerTest {
         // 8. 更新producer状态为RUNNING
         producer.start();
 
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 3; i++) {
             try {
                 Message msg = new Message("MyFirstTopic",
                         "*",
@@ -36,8 +36,12 @@ public class SimpleProducerTest {
                 // 发送消息
                 // 1. 获取topic的发布信息topicPublishInfo
                 // 2. 在topic对应的broker中，选择一个需要发送消息的mq队列
-                // 3. 通过netty的方式发送给broker
+                // 3. 通过netty的方式发送消息给broker
                 // 发送消息有三种模式：同步，异步，oneWay
+                // 都是通过broker address建立channel
+                // 同步的发送用cdl阻塞等待返回sendResult，
+                // 异步的发送需要先获取semaphore的许可，
+                // 异步的回调则由producer启动时，启动的netty的响应通道时，注册的NettyClientHandler处理
                 // 发送失败会自动尝试，默认是1+2=3次
                 // 如果开启了延迟容错机制，那么对于broker的延时长度，会有一个对应的不可用时间，在这个不可用时间段内，该broker暂时unavailable
                 // 在这个时间内还有发送消息的请求，那么会随机出一个broker发送(i = threadLocalIndex % half)

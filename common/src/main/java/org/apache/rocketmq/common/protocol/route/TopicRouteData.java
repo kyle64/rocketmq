@@ -25,9 +25,12 @@ import java.util.HashMap;
 import java.util.List;
 import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
 
+// 保存所有的Queue信息，不管是consumer还是producer的
 public class TopicRouteData extends RemotingSerializable {
     private String orderTopicConf;
+    // 内部通过wirte或者read来区分queue属于Consumer(read)/Producer(write)
     private List<QueueData> queueDatas;
+    // Broker的地址信息
     private List<BrokerData> brokerDatas;
     private HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 

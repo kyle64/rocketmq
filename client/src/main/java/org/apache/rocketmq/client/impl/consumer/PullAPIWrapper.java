@@ -77,7 +77,7 @@ public class PullAPIWrapper {
             ByteBuffer byteBuffer = ByteBuffer.wrap(pullResultExt.getMessageBinary());
             List<MessageExt> msgList = MessageDecoder.decodes(byteBuffer);
 
-            // 根据订阅信息消息tagCode匹配合适消息
+            // 根据订阅信息消息tagCode匹配合适消息（消息过滤）
             List<MessageExt> msgListFilterAgain = msgList;
             if (!subscriptionData.getTagsSet().isEmpty() && !subscriptionData.isClassFilterMode()) {
                 msgListFilterAgain = new ArrayList<MessageExt>(msgList.size());
@@ -144,16 +144,16 @@ public class PullAPIWrapper {
     }
 
     public PullResult pullKernelImpl(
-        final MessageQueue mq,
+        final MessageQueue mq, // 消息消费队列
         final String subExpression,
         final String expressionType,
         final long subVersion,
-        final long offset,
+        final long offset, // pullRequest.getNextOffset(), 要拉取的offset偏移
         final int maxNums,
         final int sysFlag,
-        final long commitOffset,
-        final long brokerSuspendMaxTimeMillis,
-        final long timeoutMillis,
+        final long commitOffset, // 当前消息队列 commitlog日志中当前的最新偏移量（内存中）
+        final long brokerSuspendMaxTimeMillis, // 允许的broker 暂停的时间，毫秒为单位，默认为15s
+        final long timeoutMillis, // 超时时间,默认为30s
         final CommunicationMode communicationMode,
         final PullCallback pullCallback
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
@@ -206,6 +206,7 @@ public class PullAPIWrapper {
                 brokerAddr = computPullFromWhichFilterServer(mq.getTopic(), brokerAddr);
             }
 
+            // 调用MQClientAPIImpl对broker发起拉取请求
             PullResult pullResult = this.mQClientFactory.getMQClientAPIImpl().pullMessage(
                 brokerAddr,
                 requestHeader,

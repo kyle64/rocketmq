@@ -419,8 +419,15 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                 return;
             }
 
+            // 和并发消费最大的区别。顺序消费加锁
+            // 一个消费者中线程池中线程的锁粒度为，MessageQueue,消费队列，
+            // 也就是说RocketMQ实现顺序消费是针对MessageQueue,也就是RocketMQ无法做到多MessageQueue的全局顺序消费。
+            // 如果要使用RocketMQ做的主题的全局顺序消费，那该主题只能允许一个队列。
+
+            // 对象锁由一个concurrentHashMap持有，key是mq，保证一个mq同时只有一个消费线程在消费
             final Object objLock = messageQueueLock.fetchLockObject(this.messageQueue);
             synchronized (objLock) {
+                // 广播模式 或者 processQueue已锁定
                 if (MessageModel.BROADCASTING.equals(ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel())
                     || (this.processQueue.isLocked() && !this.processQueue.isLockExpired())) {
                     final long beginTime = System.currentTimeMillis();
