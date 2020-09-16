@@ -45,8 +45,11 @@ public class ProcessQueue {
     private final static long PULL_MAX_IDLE_TIME = Long.parseLong(System.getProperty("rocketmq.client.pull.pullMaxIdleTime", "120000"));
     private final InternalLogger log = ClientLogger.getLog();
     private final ReadWriteLock lockTreeMap = new ReentrantReadWriteLock();
-    private final TreeMap<Long, MessageExt> msgTreeMap = new TreeMap<Long, MessageExt>();
+    // 缓存的待消费消息,按照消息的起始offset排序
+    private final TreeMap</*消息的起始offset*/ Long, MessageExt> msgTreeMap = new TreeMap<Long, MessageExt>();
+    // 缓存的待消费消息数量
     private final AtomicLong msgCount = new AtomicLong();
+    // 缓存的待消费消息大小
     private final AtomicLong msgSize = new AtomicLong();
     private final Lock lockConsume = new ReentrantLock();
     /**
@@ -56,10 +59,13 @@ public class ProcessQueue {
     private final AtomicLong tryUnlockTimes = new AtomicLong(0);
     private volatile long queueOffsetMax = 0L;
     private volatile boolean dropped = false;
+    // 上次执行拉取的时间
     private volatile long lastPullTimestamp = System.currentTimeMillis();
+    // 上次客户端消费的时间
     private volatile long lastConsumeTimestamp = System.currentTimeMillis();
     private volatile boolean locked = false;
     private volatile long lastLockTimestamp = System.currentTimeMillis();
+    // 当前是否在消费，用于顺序消费模式，对并行消费无效
     private volatile boolean consuming = false;
     private volatile long msgAccCnt = 0;
 

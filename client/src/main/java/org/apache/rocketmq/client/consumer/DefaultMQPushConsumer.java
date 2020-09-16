@@ -156,11 +156,13 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Minimum consumer thread number
+     * 消费服务ConsumeMessageService中线程池的常驻线程数
      */
     private int consumeThreadMin = 20;
 
     /**
      * Max consumer thread number
+     * 消费服务ConsumeMessageService中线程池的最大线程数
      */
     private int consumeThreadMax = 20;
 
@@ -218,6 +220,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Batch consumption size
+     * 一个线程一批次最大处理消息条数
      */
     private int consumeMessageBatchMaxSize = 1;
 

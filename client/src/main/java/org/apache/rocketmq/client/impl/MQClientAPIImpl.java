@@ -741,6 +741,7 @@ public class MQClientAPIImpl {
         return null;
     }
 
+    // 异步拉取消息
     private void pullMessageAsync(
         final String addr,
         final RemotingCommand request,
