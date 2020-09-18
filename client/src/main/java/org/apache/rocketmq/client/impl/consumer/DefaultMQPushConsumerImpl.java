@@ -329,7 +329,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                                 pullRequest.getMessageQueue().getTopic(), pullRT);
 
                             long firstMsgOffset = Long.MAX_VALUE;
-                            // 消息列表是否为空
+                            // 消息列表是否为空，比如被过滤掉
                             if (pullResult.getMsgFoundList() == null || pullResult.getMsgFoundList().isEmpty()) {
                                 // 立即放到pullMessage的待处理队列中
                                 DefaultMQPushConsumerImpl.this.executePullRequestImmediately(pullRequest);
@@ -1071,6 +1071,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     @Override
     public void doRebalance() {
         if (!this.pause) {
+            // 调用持有的rebalanceImpl#doRebalance
             this.rebalanceImpl.doRebalance(this.isConsumeOrderly());
         }
     }

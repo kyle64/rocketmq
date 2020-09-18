@@ -265,14 +265,20 @@ public class ProcessQueue {
 
     public long commit() {
         try {
+            // 获取写锁
             this.lockTreeMap.writeLock().lockInterruptibly();
             try {
+                // 获取consumingMsgOrderlyTreeMap中的最大消息偏移offset
                 Long offset = this.consumingMsgOrderlyTreeMap.lastKey();
+                // 更新消息数量
                 msgCount.addAndGet(0 - this.consumingMsgOrderlyTreeMap.size());
+                // 更新消息大小
                 for (MessageExt msg : this.consumingMsgOrderlyTreeMap.values()) {
                     msgSize.addAndGet(0 - msg.getBody().length);
                 }
+                // 清除consumingMsgOrderlyTreeMap
                 this.consumingMsgOrderlyTreeMap.clear();
+                // 赶回offset+1的消费进度
                 if (offset != null) {
                     return offset + 1;
                 }
@@ -306,13 +312,16 @@ public class ProcessQueue {
         List<MessageExt> result = new ArrayList<MessageExt>(batchSize);
         final long now = System.currentTimeMillis();
         try {
+            // 加写锁
             this.lockTreeMap.writeLock().lockInterruptibly();
             this.lastConsumeTimestamp = now;
             try {
                 if (!this.msgTreeMap.isEmpty()) {
                     for (int i = 0; i < batchSize; i++) {
+                        // 将消息从msgTreeMap移除到consumingMsgOrderlyTreeMap
                         Map.Entry<Long, MessageExt> entry = this.msgTreeMap.pollFirstEntry();
                         if (entry != null) {
+                            // 将消息加入返回的顺序消息列表
                             result.add(entry.getValue());
                             consumingMsgOrderlyTreeMap.put(entry.getKey(), entry.getValue());
                         } else {
