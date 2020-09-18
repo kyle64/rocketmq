@@ -1003,10 +1003,13 @@ public class MQClientInstance {
     }
 
     public void doRebalance() {
+        // 遍历consumerTable，对每一个consumeGroup中的consumer进行rebalance
+        // consumerTable中保存的是consumeGroup中第一个注册的consumer
         for (Map.Entry<String, MQConsumerInner> entry : this.consumerTable.entrySet()) {
             MQConsumerInner impl = entry.getValue();
             if (impl != null) {
                 try {
+                    // 调用具体的pull/push模式的consumer实现类
                     impl.doRebalance();
                 } catch (Throwable e) {
                     log.error("doRebalance exception", e);
@@ -1103,6 +1106,7 @@ public class MQClientInstance {
     }
 
     public List<String> findConsumerIdList(final String topic, final String group) {
+        // 获取broker地址
         String brokerAddr = this.findBrokerAddrByTopic(topic);
         if (null == brokerAddr) {
             this.updateTopicRouteInfoFromNameServer(topic);
@@ -1111,6 +1115,7 @@ public class MQClientInstance {
 
         if (null != brokerAddr) {
             try {
+                // 返回该consume group下的consumer id列表
                 return this.mQClientAPIImpl.getConsumerIdListByGroup(brokerAddr, group, 3000);
             } catch (Exception e) {
                 log.warn("getConsumerIdListByGroup exception, " + brokerAddr + " " + group, e);
