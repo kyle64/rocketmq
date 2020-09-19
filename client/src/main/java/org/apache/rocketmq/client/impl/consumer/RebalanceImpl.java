@@ -136,6 +136,14 @@ public abstract class RebalanceImpl {
         return result;
     }
 
+    /**
+     * @Description: 对指定mq加锁
+     *
+     * 消息消费的各个环节基本都是围绕消息消费队列(MessageQueue)与消息处理队列(ProceeQueue)展开的。
+     * 消息消费进度拉取，消息进度消费都要判断ProceeQueue的locked是否为true,
+     * 在设置ProceeQueue为true的前提条件是消息消费者(cid)向Broker端发送锁定消息队列的请求并返回加锁成功。
+     *
+     */
     public boolean lock(final MessageQueue mq) {
         FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(), MixAll.MASTER_ID, true);
         if (findBrokerResult != null) {
@@ -145,6 +153,7 @@ public abstract class RebalanceImpl {
             requestBody.getMqSet().add(mq);
 
             try {
+                // 本质上是将这一个mq加入到已有的mqSet中，在请求broker的lockBatch加锁
                 Set<MessageQueue> lockedMq =
                     this.mQClientFactory.getMQClientAPIImpl().lockBatchMQ(findBrokerResult.getBrokerAddr(), requestBody, 1000);
                 for (MessageQueue mmqq : lockedMq) {
@@ -169,6 +178,9 @@ public abstract class RebalanceImpl {
         return false;
     }
 
+    /**
+     * @Description: 让当前consumer尝试对该消费组的所有mq加锁
+     */
     public void lockAll() {
         // 将mq根据broker分组构建map
         HashMap<String, Set<MessageQueue>> brokerMqs = this.buildProcessQueueTableByBrokerName();

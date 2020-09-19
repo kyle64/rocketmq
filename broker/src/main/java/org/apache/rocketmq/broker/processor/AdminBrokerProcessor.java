@@ -632,6 +632,8 @@ public class AdminBrokerProcessor extends AsyncNettyRequestProcessor implements 
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
         LockBatchRequestBody requestBody = LockBatchRequestBody.decode(request.getBody(), LockBatchRequestBody.class);
 
+        // 尝试批量加锁
+        // 尝试用clientId对consumer group中所有的mq加锁
         Set<MessageQueue> lockOKMQSet = this.brokerController.getRebalanceLockManager().tryLockBatch(
             requestBody.getConsumerGroup(),
             requestBody.getMqSet(),
