@@ -26,6 +26,8 @@ public class ManyPullRequest {
         this.pullRequestList.add(pullRequest);
     }
 
+    // 需要同步，原因是 ReputMessageService 内部其实会持有 PullRequestHoldService 的引用
+    // 也就是在运行过程中，对于拉取任务, ReputMessageService、PullRequestHoldService处理的任务是同一个集合。
     public synchronized void addPullRequest(final List<PullRequest> many) {
         this.pullRequestList.addAll(many);
     }

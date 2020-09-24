@@ -383,6 +383,7 @@ public class ConsumeQueue {
     public void putMessagePositionInfoWrapper(DispatchRequest request) {
         final int maxRetries = 30;
         boolean canWrite = this.defaultMessageStore.getRunningFlags().isCQWriteable();
+        // 循环重试写
         for (int i = 0; i < maxRetries && canWrite; i++) {
             long tagsCode = request.getTagsCode();
             if (isExtWriteEnable()) {
@@ -399,6 +400,7 @@ public class ConsumeQueue {
                         topic, queueId, request.getCommitLogOffset());
                 }
             }
+            // 添加位置信息
             boolean result = this.putMessagePositionInfo(request.getCommitLogOffset(),
                 request.getMsgSize(), tagsCode, request.getConsumeQueueOffset());
             if (result) {
@@ -426,6 +428,16 @@ public class ConsumeQueue {
         this.defaultMessageStore.getRunningFlags().makeLogicsQueueError();
     }
 
+    /**
+     * @Description: 真正的写入到 ConsumeQueue 的逻辑
+     *
+     * @date 2020/9/23 下午5:26
+     * @param offset commitLog的存储偏移
+     * @param size 消息体大小
+     * @param tagsCode tags的hashCode
+     * @param cqOffset 写入consumeQueue的偏移量
+     * @return boolean
+     */
     private boolean putMessagePositionInfo(final long offset, final int size, final long tagsCode,
         final long cqOffset) {
 
@@ -434,17 +446,23 @@ public class ConsumeQueue {
             return true;
         }
 
+        // flip byteBuffer，准备往缓冲区写
         this.byteBufferIndex.flip();
+        // 限制consumeQueue的写入为20字节
         this.byteBufferIndex.limit(CQ_STORE_UNIT_SIZE);
+        // 将commitlog物理偏移量、4字节的消息长度、8字节tag hashcode写入buffer
         this.byteBufferIndex.putLong(offset);
         this.byteBufferIndex.putInt(size);
         this.byteBufferIndex.putLong(tagsCode);
 
+        // 计算consumeQueue期望的存储位置
         final long expectLogicOffset = cqOffset * CQ_STORE_UNIT_SIZE;
 
+        // 获得对应插入位置的MappedFile
         MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(expectLogicOffset);
         if (mappedFile != null) {
 
+            // 如果mappedFile是新建的，那么需要填充空白位
             if (mappedFile.isFirstCreateInQueue() && cqOffset != 0 && mappedFile.getWrotePosition() == 0) {
                 this.minLogicOffset = expectLogicOffset;
                 this.mappedFileQueue.setFlushedWhere(expectLogicOffset);
@@ -454,6 +472,7 @@ public class ConsumeQueue {
                     + mappedFile.getWrotePosition());
             }
 
+            // 校验consumeQueue存储位置是否合法
             if (cqOffset != 0) {
                 long currentLogicOffset = mappedFile.getWrotePosition() + mappedFile.getFileFromOffset();
 
@@ -474,7 +493,9 @@ public class ConsumeQueue {
                     );
                 }
             }
+            // 更新ConsumeQueue的最大物理偏移
             this.maxPhysicOffset = offset + size;
+            // 写入到 ConsumeQueue 文件中
             return mappedFile.appendMessage(this.byteBufferIndex.array());
         }
         return false;
@@ -496,8 +517,10 @@ public class ConsumeQueue {
         int mappedFileSize = this.mappedFileSize;
         long offset = startIndex * CQ_STORE_UNIT_SIZE;
         if (offset >= this.getMinLogicOffset()) {
+            // 根据offset计算目标mappedFile在mappedFileQueue中的位置并取出
             MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset);
             if (mappedFile != null) {
+                // 从mappedFile中读取指定的数据
                 SelectMappedBufferResult result = mappedFile.selectMappedBuffer((int) (offset % mappedFileSize));
                 return result;
             }

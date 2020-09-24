@@ -125,7 +125,18 @@ public class ConsumerOffsetManager extends ConfigManager {
         this.commitOffset(clientHost, key, queueId, offset);
     }
 
+    /**
+     * @Description: 提交消费进度
+     *
+     * @date 2020/9/22 下午4:18
+     * @param clientHost client地址
+     * @param key topic@consumerGroup
+     * @param queueId 队列id
+     * @param offset 队列位置偏移
+     * @return void
+     */
     private void commitOffset(final String clientHost, final String key, final int queueId, final long offset) {
+        // 将队列偏移提交保存到offsetTable缓存
         ConcurrentMap<Integer, Long> map = this.offsetTable.get(key);
         if (null == map) {
             map = new ConcurrentHashMap<Integer, Long>(32);
