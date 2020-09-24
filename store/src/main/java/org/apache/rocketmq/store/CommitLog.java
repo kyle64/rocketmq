@@ -1188,6 +1188,7 @@ public class CommitLog {
         return null;
     }
 
+    // 获取指定位置所在文件的下一个文件的起始偏移量
     public long rollNextFile(final long offset) {
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();
         return offset + mappedFileSize - offset % mappedFileSize;

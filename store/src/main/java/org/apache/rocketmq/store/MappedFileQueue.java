@@ -476,6 +476,7 @@ public class MappedFileQueue {
      */
     public MappedFile findMappedFileByOffset(final long offset, final boolean returnFirstOnNotFound) {
         try {
+            // 此处得到的第一个MappedFile的文件起始offset（即文件名）不一定是0，之前的文件有可能已经被清除了。
             MappedFile firstMappedFile = this.getFirstMappedFile();
             MappedFile lastMappedFile = this.getLastMappedFile();
             if (firstMappedFile != null && lastMappedFile != null) {
@@ -488,6 +489,8 @@ public class MappedFileQueue {
                         this.mappedFiles.size());
                 } else {
                     // 计算mappedFile下标
+                    // 之前的文件有可能已经被清除了（从this.mappedFiles里也会删掉）。
+                    // 因此不能直接用offset / this.mappedFileSize计算offset对应的文件索引。
                     int index = (int) ((offset / this.mappedFileSize) - (firstMappedFile.getFileFromOffset() / this.mappedFileSize));
                     MappedFile targetFile = null;
                     try {
