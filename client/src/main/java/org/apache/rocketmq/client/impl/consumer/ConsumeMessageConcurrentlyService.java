@@ -321,9 +321,21 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                 break;
         }
 
-        // 更新消费进度，从ProceeQueue中删除相应的消息
+        // 更新消费进度
+        // 从ProceeQueue中删除相应的消息，返回当前processQueue中未处理的第一个offset
+        // 防止因为并发消费导致的消息丢失（未消费），但可能导致重复消费
+        //
+        // 这种方式和传统的一条message单独ack的方式有本质的区别。
+        // 性能上提升的同时，会带来一个潜在的重复问题——由于消费进度只是记录了一个下标，
+        // 就可能出现拉取了100条消息如 2101-2200的消息，后面99条都消费结束了，只有2101消费一直没有结束的情况。
+        // 在这种情况下，RocketMQ为了保证消息肯定被消费成功，消费进度职能维持在2101，直到2101也消费结束了，
+        // 本地的消费进度才能标记2200消费结束了（注：consumerOffset=2201）。
+        // 在这种设计下，就有消费大量重复的风险。如2101在还没有消费完成的时候消费实例突然退出（机器断电，或者被kill）。
+        // 这条queue的消费进度还是维持在2101，当queue重新分配给新的实例的时候，新的实例从broker上拿到的消费进度还是维持在2101，
+        // 这时候就会又从2101开始消费，2102-2200这批消息实际上已经被消费过还是会投递一次
         long offset = consumeRequest.getProcessQueue().removeMessage(consumeRequest.getMsgs());
         if (offset >= 0 && !consumeRequest.getProcessQueue().isDropped()) {
+            // 更新消费进度
             this.defaultMQPushConsumerImpl.getOffsetStore().updateOffset(consumeRequest.getMessageQueue(), offset, true);
         }
     }

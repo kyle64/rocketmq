@@ -195,18 +195,24 @@ public class ProcessQueue {
             this.lockTreeMap.writeLock().lockInterruptibly();
             this.lastConsumeTimestamp = now;
             try {
+                // treeMap是按消息的offset升序排列的
                 if (!msgTreeMap.isEmpty()) {
+                    // 把result更新为最大偏移量+1
                     result = this.queueOffsetMax + 1;
                     int removedCnt = 0;
+                    // 删除列表中的消息
                     for (MessageExt msg : msgs) {
                         MessageExt prev = msgTreeMap.remove(msg.getQueueOffset());
                         if (prev != null) {
                             removedCnt--;
+                            // 更新消息体大小
                             msgSize.addAndGet(0 - msg.getBody().length);
                         }
                     }
+                    // 更新消息数量
                     msgCount.addAndGet(removedCnt);
 
+                    // 如果处理的缓存队列中还存在消息，则分会队列中最小的偏移量
                     if (!msgTreeMap.isEmpty()) {
                         result = msgTreeMap.firstKey();
                     }
