@@ -199,6 +199,7 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
                 RemotingHelper.parseChannelRemoteAddr(ctx.channel()),
                 requestHeader.getDefaultTopicQueueNums(), topicSysFlag);
 
+            // broker在接收到consumer发送回来的重试的时候，如果还没有创建retryTopic的topicConfig配置，则会新建
             if (null == topicConfig) {
                 if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
                     topicConfig =

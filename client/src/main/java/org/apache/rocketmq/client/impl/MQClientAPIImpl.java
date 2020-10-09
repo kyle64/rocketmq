@@ -1019,6 +1019,7 @@ public class MQClientAPIImpl {
         final long timeoutMillis
     ) throws RemotingConnectException, RemotingTooMuchRequestException, RemotingTimeoutException, RemotingSendRequestException,
         InterruptedException {
+        // 发送更新消费进度的请求
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, requestHeader);
 
         this.remotingClient.invokeOneway(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr), request, timeoutMillis);
@@ -1105,6 +1106,18 @@ public class MQClientAPIImpl {
         return response.getCode() == ResponseCode.SUCCESS;
     }
 
+    /**
+     * @Description: 向broker发送消费失败的消息
+     *
+     * @date 2020/9/29 下午11:38
+     * @param addr
+     * @param msg
+     * @param consumerGroup
+     * @param delayLevel
+     * @param timeoutMillis
+     * @param maxConsumeRetryTimes
+     * @return void
+     */
     public void consumerSendMessageBack(
         final String addr,
         final MessageExt msg,
@@ -1114,13 +1127,20 @@ public class MQClientAPIImpl {
         final int maxConsumeRetryTimes
     ) throws RemotingException, MQBrokerException, InterruptedException {
         ConsumerSendMsgBackRequestHeader requestHeader = new ConsumerSendMsgBackRequestHeader();
+        // 和普通的发送消息的RequestCode不一样，由broker特殊处理
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.CONSUMER_SEND_MSG_BACK, requestHeader);
 
+        // 设置消费组
         requestHeader.setGroup(consumerGroup);
+        // 因为重试的消息被broker拿到后会修改topic，所以这里设置原始的topic
         requestHeader.setOriginTopic(msg.getTopic());
+        // 设置原始消息在commitLog中的偏移
         requestHeader.setOffset(msg.getCommitLogOffset());
+        // 设置延迟级别
         requestHeader.setDelayLevel(delayLevel);
+        // 设置初始的msgId
         requestHeader.setOriginMsgId(msg.getMsgId());
+        // 设置最多被重试的次数，默认是16
         requestHeader.setMaxReconsumeTimes(maxConsumeRetryTimes);
 
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),

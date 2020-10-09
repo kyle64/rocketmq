@@ -102,6 +102,14 @@ public class ConsumerManageProcessor extends AsyncNettyRequestProcessor implemen
         return response;
     }
 
+    /**
+     * @Description: broker更新消费进度存储
+     *
+     * @date 2020/10/5 下午1:19
+     * @param ctx
+     * @param request
+     * @return org.apache.rocketmq.remoting.protocol.RemotingCommand
+     */
     private RemotingCommand updateConsumerOffset(ChannelHandlerContext ctx, RemotingCommand request)
         throws RemotingCommandException {
         final RemotingCommand response =

@@ -87,6 +87,8 @@ public class ClientManageProcessor extends AsyncNettyRequestProcessor implements
                 this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(
                     data.getGroupName());
             boolean isNotifyConsumerIdsChangedEnable = true;
+            // consumer启动后会向broker发送heartbeat数据，
+            // 如果broker中还没有对应的SubscriptionGroupConfig信息，会创建对应topic的retryTopic
             if (null != subscriptionGroupConfig) {
                 isNotifyConsumerIdsChangedEnable = subscriptionGroupConfig.isNotifyConsumerIdsChangedEnable();
                 int topicSysFlag = 0;
