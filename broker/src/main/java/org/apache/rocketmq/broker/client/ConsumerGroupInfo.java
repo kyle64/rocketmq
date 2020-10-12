@@ -146,6 +146,10 @@ public class ConsumerGroupInfo {
         return updated;
     }
 
+    // 保存最新的client订阅信息
+    // 订阅信息发生变更时，删除缓存中旧的订阅信息
+    // 因为方法在heartbeat心跳检查时调用，因此应该避免出现同一个消费组中的不同consumer实例订阅不同topic导致消费混乱
+    // consumeGroup消费组和topic应该一一对应
     public boolean updateSubscription(final Set<SubscriptionData> subList) {
         boolean updated = false;
 
