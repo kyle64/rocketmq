@@ -186,6 +186,8 @@ public class MappedFile extends ReferenceResource {
             // 文件中的位置在虚拟内存中有了对应的地址，可以像操作内存一样操作这个文件，相当于已经把整个文件放入内存，
             // 但在真正使用到这些数据前却不会消耗物理内存，也不会有读写磁盘的操作，只有真正使用这些数据时
             this.fileChannel = new RandomAccessFile(this.file, "rw").getChannel();
+            // 当调用 FileChannel.map() 方法的时候，会将这个文件映射进用户空间的地址空间中，
+            // 注意，建立映射不会拷贝任何数据，Broker 启动的时候会有一个消息文件加载的过程
             this.mappedByteBuffer = this.fileChannel.map(MapMode.READ_WRITE, 0, fileSize);
             TOTAL_MAPPED_VIRTUAL_MEMORY.addAndGet(fileSize);
             TOTAL_MAPPED_FILES.incrementAndGet();
@@ -227,10 +229,12 @@ public class MappedFile extends ReferenceResource {
         assert messageExt != null;
         assert cb != null;
 
+        // 1）获取当前内存对象的写入位置（wrotePostion变量值）；若写入位置没有超过文件大小则继续顺序写入；
         // 当前写入MappedFile文件的位置
         int currentPos = this.wrotePosition.get();
 
         if (currentPos < this.fileSize) {
+            // 2）由内存对象mappedByteBuffer创建一个指向同一块内存的ByteBuffer对象，并将内存对象的写入指针指向写入位置；
             // writeBuffer 本身也是一个DirectBuffer, 默认大小1G 和 MappedFile大小相同
             // 每次slice 都会得到position == 0, limit 和 capacity 等于1G 的影子ByteBuffer
             // 新的buffer内部的array和writeBuffer共享，position、limit等参数独立
@@ -241,6 +245,7 @@ public class MappedFile extends ReferenceResource {
             // 所以设置position的方法不会抛出异常
             byteBuffer.position(currentPos);
             AppendMessageResult result;
+            // 3）以文件的起始偏移量（fileFromOffset）、ByteBuffer对象、该内存对象剩余的空间（fileSize-wrotePostion）、消息对象msg为参数调用AppendMessageCallback回调类的doAppend方法；
             // 调用AppendMessageCallback（通过commitLog内部类实现）
             if (messageExt instanceof MessageExtBrokerInner) {
                 result = cb.doAppend(this.getFileFromOffset(), byteBuffer, this.fileSize - currentPos, (MessageExtBrokerInner) messageExt);
@@ -249,7 +254,9 @@ public class MappedFile extends ReferenceResource {
             } else {
                 return new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR);
             }
+            // 4）将MapedFile.wrotePostion的值加上写入的字节数（AppendMessageResult对象返回的值）；
             this.wrotePosition.addAndGet(result.getWroteBytes());
+            // 5）更新存储时间戳MapedFile.storeTimestamp ；
             this.storeTimestamp = result.getStoreTimestamp();
             return result;
         }
