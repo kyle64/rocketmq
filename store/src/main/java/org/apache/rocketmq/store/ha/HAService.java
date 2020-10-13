@@ -87,6 +87,8 @@ public class HAService {
     }
 
     public void notifyTransferSome(final long offset) {
+        // 如果slaveAckOffset（从broker的ack偏移）大于HAService.push2SlaveMaxOffset的值则更新push2SlaveMaxOffset的值，
+        // 并通知调用GroupTransferService.notifyTransferSome方法唤醒GroupTransferService服务线程。
         for (long value = this.push2SlaveMaxOffset.get(); offset > value; ) {
             boolean ok = this.push2SlaveMaxOffset.compareAndSet(value, offset);
             if (ok) {
@@ -106,10 +108,22 @@ public class HAService {
     // this.groupTransferService.notifyTransferSome();
     // }
 
+    // 在主备Broker启动的时候，启动HAService服务，启动了如下服务：
     public void start() throws Exception {
+        // 1）HAService.AcceptSocketService：
+        // 该服务是主用Broker使用，该服务主要监听新的Socket连接，若有新的连接到来，则创建HAConnection对象，
+        // 在该对象中创建了HAConnection.WriteSocketService和HAConnection.ReadSocketService线程服务，
+        // 对新来的socket连接分别进行读和写的监听。
         this.acceptSocketService.beginAccept();
         this.acceptSocketService.start();
+        // 2）HAService.GroupTransferService：
+        // 该服务是对同步进度进行监听，若达到应用层的写入偏移量，则通知应用层该同步已经完成。
+        // 在调用CommitLog.putMessage方法写入消息内容时，根据主用broker的配置来决定是否利用该服务进行同步等待数据同步的结果。
         this.groupTransferService.start();
+        // 3）HAService.HAClient：
+        // 该服务是备用Broker使用，在备用Broker启动之后与主用Broker建立socket连接，
+        // 然后将备用Broker的commitlog文件的最大数据位置每隔5秒给主用Broker发送一次；
+        // 并监听主用Broker的返回消息。
         this.haClient.start();
     }
 
@@ -168,6 +182,16 @@ public class HAService {
 
         /**
          * Starts listening to slave connections.
+         * 开始监听slave的连接
+         *
+         * 在启动该模块时，注册监听Socket的OP_READ操作，
+         * 若有该操作达到，即有备用Broker请求连接到该主用Broker上时，
+         * 利用该ScoketChannel初始化HAConnection对象，并调用该对象的start方法，
+         * 在该方法中启动该对象的ReadSocketService和WriteSocketService服务线程，
+         * 然后将该HAConnection对象存入HAService.connectionList:List<HAConnection>变量中，
+         * 该变量是存储客户端连接，用于管理连接的删除和销毁。
+         *
+         * ReadSocketService服务线程用于读取备用Broker的请求，WriteSocketService服务线程用于向备用Broker写入数据。
          *
          * @throws Exception If fails.
          */
@@ -216,6 +240,7 @@ public class HAService {
                                         + sc.socket().getRemoteSocketAddress());
 
                                     try {
+                                        // 创建HAConnection对象，并启动ReadSocketService和WriteSocketService服务线程
                                         HAConnection conn = new HAConnection(HAService.this, sc);
                                         conn.start();
                                         HAService.this.addConnection(conn);
@@ -250,6 +275,13 @@ public class HAService {
 
     /**
      * GroupTransferService Service
+     *
+     * 该服务是对同步进度进行监听，若达到应用层的写入偏移量，则通知应用层该同步已经完成。
+     * 在调用CommitLog.putMessage方法写入消息内容时，根据主用broker的配置来决定是否利用该服务进行同步等待数据同步的结果。
+     *
+     * 应用层将请求放入requestsWrite队列中，
+     * 当该服务线程被唤醒时，首先将requestsWrite队列的请求与requestsRead队列的请求交换，
+     * 而requestsRead队列一般都是空的，也就是将requestsWrite队列的内容赋值到requestsRead队列之后再清空；
      */
     class GroupTransferService extends ServiceThread {
 
@@ -277,6 +309,9 @@ public class HAService {
         private void doWaitTransfer() {
             synchronized (this.requestsRead) {
                 if (!this.requestsRead.isEmpty()) {
+                    // 然后遍历requestsRead队列的每个GroupCommitRequest对象，用该对象的NextOffset值与push2SlaveMaxOffset比较，
+                    // 若push2SlaveMaxOffset大于了该对象的NextOffset值则置GroupCommitRequest请求对象的flushOK变量为true，
+                    // 在调用处对该变量有监听。
                     for (CommitLog.GroupCommitRequest req : this.requestsRead) {
                         boolean transferOK = HAService.this.push2SlaveMaxOffset.get() >= req.getNextOffset();
                         long waitUntilWhen = HAService.this.defaultMessageStore.getSystemClock().now()
@@ -290,9 +325,11 @@ public class HAService {
                             log.warn("transfer messsage to slave timeout, " + req.getNextOffset());
                         }
 
+                        // 设置同步请求的状态
                         req.wakeupCustomer(transferOK ? PutMessageStatus.PUT_OK : PutMessageStatus.FLUSH_SLAVE_TIMEOUT);
                     }
 
+                    // 情况requestsRead列表
                     this.requestsRead.clear();
                 }
             }
@@ -303,6 +340,7 @@ public class HAService {
 
             while (!this.isStopped()) {
                 try {
+                    // 结束等待（被唤醒）的时候调用onWaitEnd方法中的swapRequests()交换requestsWrite列表和requestsRead列表
                     this.waitForRunning(10);
                     this.doWaitTransfer();
                 } catch (Exception e) {

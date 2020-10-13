@@ -1132,6 +1132,18 @@ public class BrokerController {
         return accessValidatorMap;
     }
 
+    /**
+     * @Description: slave broker同步处理
+     *
+     * 在集群模式下，为了保证高可用，必须要保证备用Broker与主用Broker信息是一致的，
+     * 在备用Broker初始化时设置的了定时任务，每10秒调用SlaveSynchronize.syncAll()方法发起向主用Broker进行一次config类文件的同步，
+     * 而消息数据的同步由主备Broker通过心跳检测的方式完成，每隔5秒进行一次心跳。
+     * 主用Broker提供读写服务，而备用Broker只提供读服务。
+     *
+     * @date 2020/10/13 上午12:50
+     * @param
+     * @return void
+     */
     private void handleSlaveSynchronize(BrokerRole role) {
         if (role == BrokerRole.SLAVE) {
             if (null != slaveSyncFuture) {
