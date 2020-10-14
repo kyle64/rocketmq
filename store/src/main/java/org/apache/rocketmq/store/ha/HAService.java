@@ -44,21 +44,33 @@ import org.apache.rocketmq.store.PutMessageStatus;
 public class HAService {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    // Master维护的连接数。（Slave的个数）
     private final AtomicInteger connectionCount = new AtomicInteger(0);
 
+    // 具体连接信息
     private final List<HAConnection> connectionList = new LinkedList<>();
 
+    // 服务端接收连接线程实现类
     private final AcceptSocketService acceptSocketService;
 
+    // broker存储实现类
     private final DefaultMessageStore defaultMessageStore;
 
     private final WaitNotifyObject waitNotifyObject = new WaitNotifyObject();
+    // 该Master所有Slave中同步最大的偏移量。
     private final AtomicLong push2SlaveMaxOffset = new AtomicLong(0);
 
+    // 判断主从同步复制是否完成
     private final GroupTransferService groupTransferService;
 
+    // HA客户端实现，Slave端网络的实现类。
     private final HAClient haClient;
 
+    // RocketMQ HA机制大体可以分为如下三个部分。
+    //
+    // Master启动并监听Slave的连接请求。
+    // Slave启动，与Master建立链接。
+    // Slave发送待拉取偏移量待Master返回数据，持续该过程。
     public HAService(final DefaultMessageStore defaultMessageStore) throws IOException {
         this.defaultMessageStore = defaultMessageStore;
         this.acceptSocketService =
@@ -86,6 +98,9 @@ public class HAService {
         return result;
     }
 
+    // 该方法是在Master收到从服务器的拉取请求，拉取请求是slave下一次待拉取的消息偏移量，也可以认为是Slave的拉取偏移量确认信息，
+    // 如果该信息大于push2SlaveMaxOffset，则更新push2SlaveMaxOffset，
+    // 然后唤醒GroupTransferService线程，各消息发送者线程再判断push2SlaveMaxOffset与期望的偏移量进行对比。
     public void notifyTransferSome(final long offset) {
         // 如果slaveAckOffset（从broker的ack偏移）大于HAService.push2SlaveMaxOffset的值则更新push2SlaveMaxOffset的值，
         // 并通知调用GroupTransferService.notifyTransferSome方法唤醒GroupTransferService服务线程。
@@ -276,6 +291,11 @@ public class HAService {
     /**
      * GroupTransferService Service
      *
+     * GroupTransferService同步主从同步阻塞实现，
+     * 如果是同步主从模式，消息发送者将消息刷写到磁盘后，需要继续等待新数据被传输到从服务器，
+     * 从服务器数据的复制是在另外一个线程HAConnection中去拉取，所以消息发送者在这里需要等待数据传输的结果，
+     * GroupTransferService就是实现该功能，该类的整体结构与同步刷盘实现类(CommitLog$GroupCommitService)类似
+     *
      * 该服务是对同步进度进行监听，若达到应用层的写入偏移量，则通知应用层该同步已经完成。
      * 在调用CommitLog.putMessage方法写入消息内容时，根据主用broker的配置来决定是否利用该服务进行同步等待数据同步的结果。
      *
@@ -313,6 +333,10 @@ public class HAService {
                     // 若push2SlaveMaxOffset大于了该对象的NextOffset值则置GroupCommitRequest请求对象的flushOK变量为true，
                     // 在调用处对该变量有监听。
                     for (CommitLog.GroupCommitRequest req : this.requestsRead) {
+                        // 判断主从同步是否完成的依据是：
+                        // 所有Slave中已成功复制的最大偏移量是否大于等于消息生产者发送消息后消息服务端返回下一条消息的起始偏移量，
+                        // 如果是则表示主从同步复制已经完成，唤醒消息发送线程，
+                        // 否则等待1s,再次判断，每一个任务在一批任务中循环判断5次。
                         boolean transferOK = HAService.this.push2SlaveMaxOffset.get() >= req.getNextOffset();
                         long waitUntilWhen = HAService.this.defaultMessageStore.getSystemClock().now()
                             + HAService.this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout();
@@ -362,17 +386,34 @@ public class HAService {
         }
     }
 
+    /**
+     * @Description:
+     *
+     * 在备用Broker启动的时候，启动了HAService.HAClient线程服务，
+     * 该线程有两个作用，第一，每隔5秒发送一次心跳消息；第二，接受主用Broker的返回数据，然后进行后续处理。
+     *
+     * @date 2020/10/13 下午4:07
+     * @param
+     * @return
+     */
     class HAClient extends ServiceThread {
+        // Socket读缓存区大小
         private static final int READ_MAX_BUFFER_SIZE = 1024 * 1024 * 4;
+        // master地址
         private final AtomicReference<String> masterAddress = new AtomicReference<>();
+        // Slave向Master发起主从同步的拉取偏移量，固定8个字节
         private final ByteBuffer reportOffset = ByteBuffer.allocate(8);
         private SocketChannel socketChannel;
         private Selector selector;
         private long lastWriteTimestamp = System.currentTimeMillis();
 
+        // 反馈Slave当前的复制进度，commitlog文件最大偏移量
         private long currentReportedOffset = 0;
+        // 本次已处理读缓存区的指针
         private int dispatchPosition = 0;
+        // 读缓存区，大小为4M
         private ByteBuffer byteBufferRead = ByteBuffer.allocate(READ_MAX_BUFFER_SIZE);
+        // 读缓存区备份，用于BufferRead进行交换
         private ByteBuffer byteBufferBackup = ByteBuffer.allocate(READ_MAX_BUFFER_SIZE);
 
         public HAClient() throws IOException {
@@ -388,6 +429,7 @@ public class HAService {
         }
 
         private boolean isTimeToReportOffset() {
+            // 判断是否需要向Master汇报已拉取消息偏移量。其依据为每次拉取间隔必须大于haSendHeartbeatInterval，默认5s
             long interval =
                 HAService.this.defaultMessageStore.getSystemClock().now() - this.lastWriteTimestamp;
             boolean needHeart = interval > HAService.this.defaultMessageStore.getMessageStoreConfig()
@@ -397,12 +439,25 @@ public class HAService {
         }
 
         private boolean reportSlaveMaxOffset(final long maxOffset) {
+            // 如果需要向Master反馈当前拉取偏移量，则向Master发送一个8字节的请求，请求包中包含的数据为当前Broker消息文件的最大偏移量
+            //
+            // 这里RocketMQ的作者改成了一个基本的ByteBuffer操作示例：
+            // 首先分别将ByteBuffer的position、limit设置为0与ByteBuffer的总长度，
+            // 然后将偏移量写入到ByteBuffer中，
+            // 然后需要将ByteBuffer的当前状态从写状态转换为读状态，以便将数据传入通道中。
+            //
+            // RocketMQ作者采用的方法是手段设置position指针为0，limit为ByteBuffer容易，
+            // 其实这里可以通过调用ByteBuffer的flip()方法达到同样的目的，
+            //
             this.reportOffset.position(0);
             this.reportOffset.limit(8);
             this.reportOffset.putLong(maxOffset);
             this.reportOffset.position(0);
             this.reportOffset.limit(8);
 
+            // 将一个ByteBuffer写入到通道，通常使用循环写入，
+            // 判断一个ByteBuffer是否全部写入到通道的一个方法是调用ByteBuffer#hasRemaining()方法。
+            // 如果返回false,表示在进行网络读写时发生了IO异常，此时会关闭与Master的连接。
             for (int i = 0; i < 3 && this.reportOffset.hasRemaining(); i++) {
                 try {
                     this.socketChannel.write(this.reportOffset);
@@ -418,6 +473,8 @@ public class HAService {
         }
 
         private void reallocateByteBuffer() {
+            // 1.A）检查byteBufferRead变量中的二进制数据是否解析完了（reamin=ReadMaxBufferSize-dispatchPostion）
+            // 如果remain>0表示没有解析完，则将剩下的数据复制到HAClient.byteBufferBackup变量中；
             int remain = READ_MAX_BUFFER_SIZE - this.dispatchPosition;
             if (remain > 0) {
                 this.byteBufferRead.position(this.dispatchPosition);
@@ -427,8 +484,10 @@ public class HAService {
                 this.byteBufferBackup.put(this.byteBufferRead);
             }
 
+            // 1.B）将byteBufferRead和byteBufferBackup的数据进行交换；
             this.swapByteBuffer();
 
+            // 1.C）重新初始化byteBufferRead变量的position等于remain，即表示byteBufferRead中写入到了位置position；
             this.byteBufferRead.position(remain);
             this.byteBufferRead.limit(READ_MAX_BUFFER_SIZE);
             this.dispatchPosition = 0;
@@ -442,17 +501,20 @@ public class HAService {
 
         private boolean processReadEvent() {
             int readSizeZeroTimes = 0;
+            // 从SocketChannel读取主用Broker返回的数据，一直循环的读取并解析数据
             while (this.byteBufferRead.hasRemaining()) {
                 try {
                     int readSize = this.socketChannel.read(this.byteBufferRead);
                     if (readSize > 0) {
                         readSizeZeroTimes = 0;
+                        // 调用HAClient.dispatchReadRequest()方法对数据解析和处理，
+                        // 在dispatchReadRequest方法中循环的读取byteBufferRead变量中的数据
                         boolean result = this.dispatchReadRequest();
                         if (!result) {
                             log.error("HAClient, dispatchReadRequest error");
                             return false;
                         }
-                    } else if (readSize == 0) {
+                    } else if (readSize == 0) { // 若为空将重复读取3次后仍然没有数据则跳出该循环。
                         if (++readSizeZeroTimes >= 3) {
                             break;
                         }
@@ -469,18 +531,37 @@ public class HAService {
             return true;
         }
 
+        // 该方法主要从byteBufferRead中解析一条一条的消息，然后存储到commitlog文件并转发到消息消费队列与索引文件中
         private boolean dispatchReadRequest() {
+            // msgHeaderSize,头部长度，大小为12个字节，包括消息的物理偏移量与消息的长度，长度字节必须首先探测，
+            // 否则无法判断byteBufferRead缓存区中是否包含一条完整的消息。readSocketPos：记录当前byteBufferRead的当前指针
             final int msgHeaderSize = 8 + 4; // phyoffset + size
+            // HAClient.dispatchPosition变量来标记从byteBufferRead变量读取数据的位置,初始化值为0；
+            // byteBufferRead变量的position值表示从SocketChannel中收到的数据的最后位置
             int readSocketPos = this.byteBufferRead.position();
 
             while (true) {
+                // 先探测byteBufferRead缓冲区中是否包含一条消息的头部，
+                // 如果包含头部，则读取物理偏移量与消息长度，然后再探测是否包含一条完整的消息，
+                // 如果不包含，则需要将byteBufferRead中的数据备份，以便更多数据到达再处理
+                //
+                // 比较position减dispatchPosition的值大于12（消息头部长度为12个字节）
                 int diff = this.byteBufferRead.position() - this.dispatchPosition;
+                // 大于12个字节表示有心跳消息从主用Broker发送过来，进行如下处理
                 if (diff >= msgHeaderSize) {
+                    // A）在byteBufferRead中从dispatchPosition位置开始读取数据，初始化状态下dispatchPosition等于0；
+                    // 读取8个字节的数据即为主用Broker的同步的起始物理偏移量masterPhyOffset，再后4字节为数据的大小bodySize；
                     long masterPhyOffset = this.byteBufferRead.getLong(this.dispatchPosition);
                     int bodySize = this.byteBufferRead.getInt(this.dispatchPosition + 8);
 
+                    // B）从备用Broker中获取最大的物理偏移量，
                     long slavePhyOffset = HAService.this.defaultMessageStore.getMaxPhyOffset();
 
+                    // 如果byteBufferRead中包含一则消息头部，则读取物理偏移量与消息的长度，然后获取Slave当前消息文件的最大物理偏移量，
+                    // 如果slave的最大物理偏移量与master给的偏移量不相等，则返回false，
+                    // 从后面的处理逻辑来看，返回false,将会关闭与master的连接，在Slave本次周期内将不会再参与主从同步了
+                    //
+                    // 如果与主用Broker传来的起始物理偏移量masterPhyOffset不相等，则直接返回继续执行；
                     if (slavePhyOffset != 0) {
                         if (slavePhyOffset != masterPhyOffset) {
                             log.error("master pushed offset not equal the max phy offset in slave, SLAVE: "
@@ -489,24 +570,40 @@ public class HAService {
                         }
                     }
 
+                    // dispatchPosition：表示byteBufferRead中已转发的指针。
+                    // 设置byteBufferRead的position指针为dispatchPosition+msgHeaderSize,
+                    // 然后读取bodySize个字节内容到byte[]字节数组中，
+                    // 并调用DefaultMessageStore#appendToCommitLog方法将消息内容追加到消息内存映射文件中，
+                    // 然后唤醒ReputMessageService实时将消息转发给消息消费队列与索引文件，更新dispatchPosition，
+                    // 并向服务端及时反馈当前已存储进度。将所读消息存入内存映射文件后重新向服务端发送slave最新的偏移量
+                    //
+                    // C）若position-dispatchPosition的值大于消息头部长度12字节加上bodySize之和；
+                    // 则说明有数据同步，则继续在byteBufferRead中以position+dispatchPosition开始位置读取bodySize大小的数据；
                     if (diff >= (msgHeaderSize + bodySize)) {
                         byte[] bodyData = new byte[bodySize];
                         this.byteBufferRead.position(this.dispatchPosition + msgHeaderSize);
                         this.byteBufferRead.get(bodyData);
 
+                        // D）调用DefaultMessageStore.appendToCommitLog(long startOffset, byte[] data)方法进行数据的写入；
                         HAService.this.defaultMessageStore.appendToCommitLog(masterPhyOffset, bodyData);
 
+                        // E）将byteBufferRead变量的position值重置为readSocketPos；dispatchPosition值累计12+bodySize；
                         this.byteBufferRead.position(readSocketPos);
                         this.dispatchPosition += msgHeaderSize + bodySize;
 
+                        // F）检查当前备用Broker的最大物理偏移量是否大于了上次向主用Broker报告时的最大物理偏移量（HAClient.currentReportedOffset），
+                        // 若大于则更新HAClient.currentReportedOffset的值，并将最新的物理偏移量向主用Broker报告。
                         if (!reportSlaveMaxOffsetPlus()) {
                             return false;
                         }
 
+                        // G）继续读取byteBufferRead变量中的数据
                         continue;
                     }
                 }
 
+                // 小于12个字节，并且byteBufferRead变量中没有可写空间（this.position>=this.limit）,
+                // 则调用HAClient.reallocateByteBuffer()方法进行ByteBuffer的整理
                 if (!this.byteBufferRead.hasRemaining()) {
                     this.reallocateByteBuffer();
                 }
@@ -520,6 +617,8 @@ public class HAService {
         private boolean reportSlaveMaxOffsetPlus() {
             boolean result = true;
             long currentPhyOffset = HAService.this.defaultMessageStore.getMaxPhyOffset();
+            // 比较当前slave broker的最大物理偏移量是否大于上次向master broker报告时的最大物理偏移量（HAClient.currentReportedOffset），
+            // 如果大于则更新HAClient.currentReportedOffset的值，并将最新的物理偏移量向master broker报告。
             if (currentPhyOffset > this.currentReportedOffset) {
                 this.currentReportedOffset = currentPhyOffset;
                 result = this.reportSlaveMaxOffset(this.currentReportedOffset);
@@ -534,6 +633,7 @@ public class HAService {
 
         private boolean connectMaster() throws ClosedChannelException {
             if (null == socketChannel) {
+                // 获取主用Broker的地址
                 String addr = this.masterAddress.get();
                 if (addr != null) {
 
@@ -541,13 +641,16 @@ public class HAService {
                     if (socketAddress != null) {
                         this.socketChannel = RemotingUtil.connect(socketAddress);
                         if (this.socketChannel != null) {
+                            // 与主Broker建立Socket链接，并在该链接上注册OP_READ操作，即监听master broker返回的消息
                             this.socketChannel.register(this.selector, SelectionKey.OP_READ);
                         }
                     }
                 }
 
+                // 获取备用Broker本地的最大写入位置即最大物理偏移量
                 this.currentReportedOffset = HAService.this.defaultMessageStore.getMaxPhyOffset();
 
+                // 更新最后写入时间戳
                 this.lastWriteTimestamp = System.currentTimeMillis();
             }
 
@@ -587,8 +690,18 @@ public class HAService {
 
             while (!this.isStopped()) {
                 try {
+                    // 1、从HAService.HAClient.masterAddress变量中获取主用Broker的地址，
+                    // 在备用Broker向Name Server注册时会返回主用Broker的地址；
+                    // 若有主用Broker地址则与主用Broker建立Socket链接，并在该链接上注册OP_READ操作，即监听主用Broker返回的消息；
+                    // 调用DefaultMessageStore.getMaxPhyOffset()方法获取备用Broker本地的最大写入位置即最大物理偏移量，
+                    // 然后赋值给HAClient.currentReportedOffset变量；
+                    // 更新最后写入时间戳lastWriteTimestamp；
                     if (this.connectMaster()) {
 
+                        // 2、检查上次写入时间戳lastWriteTimestamp距离现在是否已经过了5秒，
+                        // 即每隔5秒向主用Broker进行一次物理偏移量报告（HAClient.currentReportedOffset）；
+                        // 若超过了5秒，则备用Broker向主用Broker报告备用Broker的当前最大物理偏移量的值，
+                        // 该消息只有8个字节，即为物理偏移量的值；
                         if (this.isTimeToReportOffset()) {
                             boolean result = this.reportSlaveMaxOffset(this.currentReportedOffset);
                             if (!result) {
@@ -596,6 +709,16 @@ public class HAService {
                             }
                         }
 
+                        // 3、该服务线程等待1秒钟，
+                        // 然后从SocketChannel读取主用Broker返回的数据，一直循环的读取并解析数据，
+                        // 直到HAClient.byteBufferRead:ByteBuffer中无可写的空间为止，
+                        // 当ByteBuffer中的this.position<this.limit时表示有可写空间,
+                        // 该byteBufferRead变量是在初始化时HAClient是创建的，初始化空间为ReadMaxBufferSize=4G，
+                        // 若为空将重复读取3次后仍然没有数据则跳出该循环。
+                        //
+                        // 若读取到数据，则首先更新HAClient.lastWriteTimestamp变量；
+                        // 然后调用HAClient.dispatchReadRequest()方法对数据解析和处理，
+                        // 在dispatchReadRequest方法中循环的读取byteBufferRead变量中的数据
                         this.selector.select(1000);
 
                         boolean ok = this.processReadEvent();
@@ -603,10 +726,14 @@ public class HAService {
                             this.closeMaster();
                         }
 
+                        // 4、在第3步返回之后，检查当前备用Broker的最大物理偏移量是否大于了上次向主用Broker报告时的最大物理偏移量（HAClient.currentReportedOffset），
+                        // 若大于则更新HAClient.currentReportedOffset的值，并将最新的物理偏移量向主用Broker报告。
                         if (!reportSlaveMaxOffsetPlus()) {
                             continue;
                         }
 
+                        // 5、检查最后写入时间戳lastWriteTimestamp距离当前的时间，
+                        // 若大于了5秒，表示这期间未收到过主用Broker的消息，则关闭与主用Broker的连接
                         long interval =
                             HAService.this.getDefaultMessageStore().getSystemClock().now()
                                 - this.lastWriteTimestamp;

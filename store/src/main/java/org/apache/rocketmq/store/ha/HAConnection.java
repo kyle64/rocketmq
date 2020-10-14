@@ -30,6 +30,7 @@ import org.apache.rocketmq.store.SelectMappedBufferResult;
 
 public class HAConnection {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
+    // 引用的AService实现类
     private final HAService haService;
     private final SocketChannel socketChannel;
     private final String clientAddr;
