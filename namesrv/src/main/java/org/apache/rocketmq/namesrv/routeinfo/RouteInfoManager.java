@@ -49,9 +49,13 @@ public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    // 每个topic下的queue信息，包括每个broker set中读写队列的个数，consumer消费消息和producer发送消息的路由信息都从这个数据结构中获取
     private final HashMap<String/* topic */, List<QueueData>> topicQueueTable;
+    // 每个broker set中的broker信息(set中有哪些broker，每个broker的brokerId和brokerAddr)
     private final HashMap<String/* brokerName */, BrokerData> brokerAddrTable;
+    // 每个cluster下的broker set信息，一个brokerName对应的broker set
     private final HashMap<String/* clusterName */, Set<String/* brokerName */>> clusterAddrTable;
+    // 每个broker的存活情况
     private final HashMap<String/* brokerAddr */, BrokerLiveInfo> brokerLiveTable;
     private final HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 
@@ -99,6 +103,20 @@ public class RouteInfoManager {
         return topicList.encode();
     }
 
+    /**
+     * @Description: namesrv处理broker注册的方法
+     *
+     * @date 2020/10/15 下午5:00
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @param haServerAddr
+     * @param topicConfigWrapper
+     * @param filterServerList
+     * @param channel
+     * @return org.apache.rocketmq.common.namesrv.RegisterBrokerResult
+     */
     public RegisterBrokerResult registerBroker(
         final String clusterName,
         final String brokerAddr,
@@ -142,6 +160,8 @@ public class RouteInfoManager {
                 String oldAddr = brokerData.getBrokerAddrs().put(brokerId, brokerAddr);
                 registerFirst = registerFirst || (null == oldAddr);
 
+                // 这里会判断只有master才会创建QueueData，因为只有master才包含了读写队列的信息
+                // slave没有自己独立的读写队列信息（salve不会创建自己的queue信息），只是和master的的读写队列信息一致
                 if (null != topicConfigWrapper
                     && MixAll.MASTER_ID == brokerId) {
                     if (this.isBrokerTopicConfigChanged(brokerAddr, topicConfigWrapper.getDataVersion())
@@ -150,6 +170,7 @@ public class RouteInfoManager {
                             topicConfigWrapper.getTopicConfigTable();
                         if (tcTable != null) {
                             for (Map.Entry<String, TopicConfig> entry : tcTable.entrySet()) {
+                                // 这个方法创建了QueueData，QueueData包含broker set下的读写队列的信息
                                 this.createAndUpdateQueueData(brokerName, entry.getValue());
                             }
                         }

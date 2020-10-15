@@ -885,6 +885,7 @@ public class BrokerController {
         if (!messageStoreConfig.isEnableDLegerCommitLog()) {
             startProcessorByHa(messageStoreConfig.getBrokerRole());
             handleSlaveSynchronize(messageStoreConfig.getBrokerRole());
+            // broker启动的时候会向namesrv注册自己的信息
             this.registerBrokerAll(true, false, true);
         }
 
@@ -956,12 +957,12 @@ public class BrokerController {
     private void doRegisterBrokerAll(boolean checkOrderConfig, boolean oneway,
         TopicConfigSerializeWrapper topicConfigWrapper) {
         List<RegisterBrokerResult> registerBrokerResultList = this.brokerOuterAPI.registerBrokerAll(
-            this.brokerConfig.getBrokerClusterName(),
-            this.getBrokerAddr(),
-            this.brokerConfig.getBrokerName(),
-            this.brokerConfig.getBrokerId(),
-            this.getHAServerAddr(),
-            topicConfigWrapper,
+            this.brokerConfig.getBrokerClusterName(), // clusterName：broker 集群的名字，如：DefaultCluster
+            this.getBrokerAddr(), // brokerAddr：broker的ip:port，如：192.168.0.102:10911
+            this.brokerConfig.getBrokerName(), // brokerName：注意这个字段，上面介绍过了，一个broker set中的brokerName是相同的，需要在部署的时候配置
+            this.brokerConfig.getBrokerId(), // brokerId：用来唯一标示一个broker set中的broker，master是0（org.apache.rocketmq.common.MixAll#MASTER_ID），slave是正整数
+            this.getHAServerAddr(), // haServerAddr：haServer的ip:port，如：192.168.0.102:10912
+            topicConfigWrapper, // 比较复杂的数据结构，主要包含了broker上所有的topic信息
             this.filterServerManager.buildNewFilterServerList(),
             oneway,
             this.brokerConfig.getRegisterBrokerTimeoutMills(),
