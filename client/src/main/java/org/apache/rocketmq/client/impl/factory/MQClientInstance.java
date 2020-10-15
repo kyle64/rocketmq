@@ -629,6 +629,11 @@ public class MQClientInstance {
     }
 
     // 从name server拉取topic对应的路由/队列信息
+    //
+    // 我们知道producer发送消息的时候发往哪一个broker是由MessageQueue决定的，
+    // 所以我们先要搞清楚producer发送消息时候的MessageQueue怎么来的。
+    // producer维护了一个topicPublishInfoTable，里面包含了每个topic对应的MessageQueue，
+    // 所以问题就变成了topicPublishInfoTable怎么构造的。
     public boolean updateTopicRouteInfoFromNameServer(final String topic, boolean isDefault,
         DefaultMQProducer defaultMQProducer) {
         try {
@@ -649,6 +654,8 @@ public class MQClientInstance {
                         }
                     } else {
                         // 获取指定 topic 的配置信息
+                        // 从manesrv获取topic的路由信息，namesrv从topicQueueTable获取到该topic对应的所有的QueueData
+                        // 然后将每个brokerName下的BrokerData返回
                         topicRouteData = this.mQClientAPIImpl.getTopicRouteInfoFromNameServer(topic, 1000 * 3);
                     }
                     if (topicRouteData != null) {
@@ -665,11 +672,14 @@ public class MQClientInstance {
                             TopicRouteData cloneTopicRouteData = topicRouteData.cloneTopicRouteData();
 
                             for (BrokerData bd : topicRouteData.getBrokerDatas()) {
+                                // 每个broker set下所有的broker地址(ip:port)
                                 this.brokerAddrTable.put(bd.getBrokerName(), bd.getBrokerAddrs());
                             }
 
                             // Update Pub info
                             // 更新发布信息
+                            // 将从namesrv获取到的路由信息转换为TopicPublishInfo
+                            // 期间会将没有master的broker set的queue信息去除
                             {
                                 TopicPublishInfo publishInfo = topicRouteData2TopicPublishInfo(topic, topicRouteData);
                                 publishInfo.setHaveTopicRouterInfo(true);
@@ -1056,9 +1066,17 @@ public class MQClientInstance {
         return null;
     }
 
+    // producer的负载均衡算法选出其中一个MessageQueue发送消息
+    // （org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl#selectOneMessageQueue，这个暂时不详表），
+    // MessageQueue包含的信息有topic、brokerName、queueId，但是producer发送的时候得知道broker的ip:port信息，
+    // 而且一个brokerName对应的是一个broker set，并不能确定具体的broker，所以接下来应该找到具体的broker
     public String findBrokerAddressInPublish(final String brokerName) {
+        // 上面updateTopicRouteInfoFromNameServer方法将broker set下的broker地址信息保存到brokerAddrTable
+        // 再次重申：一个broker set下的broker的brokerName相同
         HashMap<Long/* brokerId */, String/* address */> map = this.brokerAddrTable.get(brokerName);
         if (map != null && !map.isEmpty()) {
+            // 前面说过master的brokerId就是MixAll.MASTER_ID，所以获取到的broker是broker set中的master
+            // producer只能发送消息到master，而不能发送到slave，这也说明了master负责读“写”，而slave只负责读
             return map.get(MixAll.MASTER_ID);
         }
 
