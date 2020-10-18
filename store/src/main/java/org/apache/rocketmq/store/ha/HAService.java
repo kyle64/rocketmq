@@ -123,7 +123,59 @@ public class HAService {
     // this.groupTransferService.notifyTransferSome();
     // }
 
-    // 在主备Broker启动的时候，启动HAService服务，启动了如下服务：
+    /**
+     * @Description: 在主备Broker启动的时候，启动HAService服务
+     *
+     * master和slave之间的数据通信过程是：
+     *
+     * master启动之后会监听来自slave的连接，slave启动之后会主动连接到master。
+     * 在连接建立之后，slave会向master上报自己的本地的CommitLog的offset
+     * master根据slave的offset来决定从那里开始向slave发送数据
+     *
+     * ============================================================================================
+     *
+     * slave发送给master的数据格式：
+     * offset（8字节）
+     * offset：slave本地CommitLog的maxOffset
+     * --------------------------------------------------------------------------------------------
+     * master发送给slave的数据格式：
+     * header（offset（8字节） + bodySize（4字节）） + body
+     * offset：由于master发送给slave的CommitLog的单位是MappedFile的个数，这个offset是MappedFile的起始位置
+     * bodySize：MappedFile的大小
+     * body：MappedFile的内容
+     * ============================================================================================
+     *
+     * ASYNC_MASTER同步数据到slave
+     * salve连接到master，向master上报slave当前的offset
+     * master收到后确认给slave发送数据的开始位置
+     * master查询开始位置对应的MappedFIle
+     * master将查找到的数据发送给slave
+     * slave收到数据后保存到自己的CommitLog
+     * --------------------------------------------------------------------------------------------
+     * SYNC_MASTER同步数据到slave
+     * SYNC_MASTER和ASYNC_MASTER传输数据到salve的过程是一致的，只是时机上不一样。
+     * SYNC_MASTER接收到producer发送来的消息时候，会同步等待消息也传输到slave。
+     *
+     * master将需要传输到slave的数据构造为GroupCommitRequest交给GroupTransferService
+     * 唤醒传输数据的线程（如果没有更多数据需要传输的的时候HAClient.run会等待新的消息）
+     * 等待当前的传输请求完成
+     *
+     * ============================================================================================
+     * slave的处理逻辑主要是：
+     *
+     * slave将接收到的数据都存在byteBufferRead
+     * 判断收到的数据是否完整，如果byteBufferRead待处理的数据大于headerSize则认为可以开始处理
+     * 判断收到的数据的offset是否和slave当前offset是否一致（也就是判断是否是slave需要的下一个MappedFile），如果不一致说明系统错误
+     * 按照数据协议从byteBufferRead依次读出offset、size、body
+     * 将body（MappedFile）写入slave的CommitLog
+     * 更新byteBufferRead里面的处理进度（当前已处理的字节数）
+     * 如果上面判断出收到的数据尚不足以处理，需要继续接收数据之前先对byteBufferRead进行扩容
+     *
+     *
+     * @date 2020/10/15 下午7:06
+     * @param
+     * @return void
+     */
     public void start() throws Exception {
         // 1）HAService.AcceptSocketService：
         // 该服务是主用Broker使用，该服务主要监听新的Socket连接，若有新的连接到来，则创建HAConnection对象，
@@ -488,8 +540,10 @@ public class HAService {
             this.swapByteBuffer();
 
             // 1.C）重新初始化byteBufferRead变量的position等于remain，即表示byteBufferRead中写入到了位置position；
+            // 设置下次写入的位置为之前byteBufferRead尚未处理部分的后面
             this.byteBufferRead.position(remain);
             this.byteBufferRead.limit(READ_MAX_BUFFER_SIZE);
+            // 从0开始处理byteBufferRead中的数据
             this.dispatchPosition = 0;
         }
 
@@ -545,8 +599,10 @@ public class HAService {
                 // 如果包含头部，则读取物理偏移量与消息长度，然后再探测是否包含一条完整的消息，
                 // 如果不包含，则需要将byteBufferRead中的数据备份，以便更多数据到达再处理
                 //
-                // 比较position减dispatchPosition的值大于12（消息头部长度为12个字节）
+                // 当前从master读取到的数据的总大小 - 上一次处理（写入CommitLog）到的位置
+                // 确定收到的数据是完整的
                 int diff = this.byteBufferRead.position() - this.dispatchPosition;
+                // 比较position减dispatchPosition的值大于12（消息头部长度为12个字节）
                 // 大于12个字节表示有心跳消息从主用Broker发送过来，进行如下处理
                 if (diff >= msgHeaderSize) {
                     // A）在byteBufferRead中从dispatchPosition位置开始读取数据，初始化状态下dispatchPosition等于0；
@@ -604,6 +660,7 @@ public class HAService {
 
                 // 小于12个字节，并且byteBufferRead变量中没有可写空间（this.position>=this.limit）,
                 // 则调用HAClient.reallocateByteBuffer()方法进行ByteBuffer的整理
+                // 到这里说明当前收到的信息不完整，需要使用byteBufferRead继续接收，所以要保证byteBufferRead的空间是足够接收的
                 if (!this.byteBufferRead.hasRemaining()) {
                     this.reallocateByteBuffer();
                 }
@@ -703,6 +760,7 @@ public class HAService {
                         // 若超过了5秒，则备用Broker向主用Broker报告备用Broker的当前最大物理偏移量的值，
                         // 该消息只有8个字节，即为物理偏移量的值；
                         if (this.isTimeToReportOffset()) {
+                            // 向master上报slave本地最大的CommitLog的offset
                             boolean result = this.reportSlaveMaxOffset(this.currentReportedOffset);
                             if (!result) {
                                 this.closeMaster();
@@ -721,6 +779,7 @@ public class HAService {
                         // 在dispatchReadRequest方法中循环的读取byteBufferRead变量中的数据
                         this.selector.select(1000);
 
+                        // 处理socket上的read事件，也就是处理master发来的数据
                         boolean ok = this.processReadEvent();
                         if (!ok) {
                             this.closeMaster();

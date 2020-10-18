@@ -195,6 +195,7 @@ public class RouteInfoManager {
                     }
                 }
 
+                // slave broker的话，会在向name server注册的时候获取master broker的地址并缓存
                 if (MixAll.MASTER_ID != brokerId) {
                     String masterAddr = brokerData.getBrokerAddrs().get(MixAll.MASTER_ID);
                     if (masterAddr != null) {

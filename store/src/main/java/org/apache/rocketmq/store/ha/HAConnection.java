@@ -188,15 +188,18 @@ public class HAConnection {
                             this.processPosition = pos;
 
                             // slave已确认同步的偏移量
+                            // slave上报过来的offset说明offset之前的数据slave都已经收到
                             HAConnection.this.slaveAckOffset = readOffset;
                             // 如果HAConnection.slaveRequestOffset小于零(在第一次启动时赋值为-1)则赋值给该变量
                             // 小于0则表示第一次请求，将slaveRequestOffset置为此值，需要从这个位置进行commitLog拉取；
                             if (HAConnection.this.slaveRequestOffset < 0) {
+                                // 如果是刚刚和slave建立连接，需要知道slave需要从哪里开始接收commitLog
                                 HAConnection.this.slaveRequestOffset = readOffset;
                                 log.info("slave[" + HAConnection.this.clientAddr + "] request offset " + readOffset);
                             }
 
                             // 调用HAService.notifyTransferSome
+                            // 如果收到来自slave的确认之后，唤醒等待同步到slave的线程(如果是SYNC_MASTER)
                             HAConnection.this.haService.notifyTransferSome(HAConnection.this.slaveAckOffset);
                         }
                     } else if (readSize == 0) {
@@ -253,7 +256,9 @@ public class HAConnection {
                     // 1）检查HAConnection.slaveRequestOffset是否等于-1，
                     // 即刚启动的状态，还没有收到备用Broker端的最大偏移量值；
                     // 则等待1秒钟之后再次监听slaveRequestOffset变量；
-                    // 若收到了备用Broker的最大偏移量，即不等于-1了。则执行如下步骤；
+                    // 若收到了备用Broker的最大偏移量，即不等于-1了。
+                    //
+                    // 说明还没收到来自slave的offset，等10ms重试
                     if (-1 == HAConnection.this.slaveRequestOffset) {
                         Thread.sleep(10);
                         continue;
@@ -289,6 +294,7 @@ public class HAConnection {
                             + "], and slave request " + HAConnection.this.slaveRequestOffset);
                     }
 
+                    // 如果上一次transfer完成了才进行下一次transfer
                     if (this.lastWriteOver) {
 
                         long interval =
@@ -311,6 +317,7 @@ public class HAConnection {
                                 continue;
                         }
                     } else {
+                        // 说明上一次的数据还没有传输完成，这里继续上一次的传输
                         this.lastWriteOver = this.transferData();
                         if (!this.lastWriteOver)
                             continue;
@@ -321,6 +328,7 @@ public class HAConnection {
                     // 若没有获取到数据则该服务线程等待100毫秒之后重新从第1步开始执行；
                     SelectMappedBufferResult selectResult =
                         HAConnection.this.haService.getDefaultMessageStore().getCommitLogData(this.nextTransferFromWhere);
+                    // 发送找到的MappedFile数据
                     if (selectResult != null) {
                         // 5）若获取到commitlog数据，再检查该数据的大小是否大于了32K，每次数据同步最多只能同步32K，
                         // 若大于了32K，则只发送前32K数据；
@@ -330,6 +338,7 @@ public class HAConnection {
                         }
 
                         long thisOffset = this.nextTransferFromWhere;
+                        // 计算下次需要给slave发送数据的起始位置
                         this.nextTransferFromWhere += size;
 
                         selectResult.getByteBuffer().limit(size);
@@ -344,9 +353,11 @@ public class HAConnection {
                         this.byteBufferHeader.putInt(size);
                         this.byteBufferHeader.flip();
 
+                        // 向slave发送数据
                         this.lastWriteOver = this.transferData();
                     } else {
-
+                        // 如果没有需要给slave发送的数据，传输数据的线程等到100ms
+                        // 或者等待broker接收到新发送来的消息的时候唤醒这个线程
                         HAConnection.this.haService.getWaitNotifyObject().allWaitForRunning(100);
                     }
                 } catch (Exception e) {
@@ -385,10 +396,12 @@ public class HAConnection {
             HAConnection.log.info(this.getServiceName() + " service end");
         }
 
+        // 发送数据给slave，格式：header（offset（8字节） + body的size（4字节）） + body
         private boolean transferData() throws Exception {
             int writeSizeZeroTimes = 0;
             // Write Header
             while (this.byteBufferHeader.hasRemaining()) {
+                // 前面已将需要发送的header数据放入byteBufferHeader
                 int writeSize = this.socketChannel.write(this.byteBufferHeader);
                 if (writeSize > 0) {
                     writeSizeZeroTimes = 0;
@@ -410,6 +423,7 @@ public class HAConnection {
 
             // Write Body
             if (!this.byteBufferHeader.hasRemaining()) {
+                // selectMappedBufferResult里存放的是需要发送的MappedFile数据
                 while (this.selectMappedBufferResult.getByteBuffer().hasRemaining()) {
                     int writeSize = this.socketChannel.write(this.selectMappedBufferResult.getByteBuffer());
                     if (writeSize > 0) {
@@ -427,6 +441,7 @@ public class HAConnection {
 
             boolean result = !this.byteBufferHeader.hasRemaining() && !this.selectMappedBufferResult.getByteBuffer().hasRemaining();
 
+            // 每次发送完成数据后清空selectMappedBufferResult，保证下一次发送前selectMappedBufferResult=null
             if (!this.selectMappedBufferResult.getByteBuffer().hasRemaining()) {
                 this.selectMappedBufferResult.release();
                 this.selectMappedBufferResult = null;
