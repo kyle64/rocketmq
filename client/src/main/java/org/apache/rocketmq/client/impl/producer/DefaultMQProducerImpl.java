@@ -1267,6 +1267,25 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         }
     }
 
+    /**
+     * @Description: 发送事物消息
+     *
+     * 为了保证本地事务和消息发送成功的原子性，producer会先发送一个half消息到broker
+     *
+     * 只有half消息发送成功了，事务才会被执行
+     * 如果half消息发送失败了，事务不会被执行
+     *
+     * half消息和普通的消息也不一样，half消息发送到broker后并不会被consumer消费掉。之所以不会被消费掉的原因如下：
+     *
+     * broker在将消息写入CommitLog的时候会判断消息类型，如果是是prepare或者rollback消息，ConsumeQueue的offset（每个消息对应ConsumeQueue中的一个数据结构（包含topic、tag的hashCode、消息对应CommitLog的物理offset），offset表示数据结构是第几个）不会增加
+     * broker在构造ConsumeQueue的时候会判断是否是prepare或者rollback消息，如果是这两种中的一种则不会将该消息放入ConsumeQueue，cnosumer在拉取消息的时候也就不会拉取到prepare和rollback的消息。
+     *
+     * @date 2020/10/18 下午9:52
+     * @param msg
+     * @param localTransactionExecuter 本地事物执行器
+     * @param arg
+     * @return org.apache.rocketmq.client.producer.TransactionSendResult
+     */
     public TransactionSendResult sendMessageInTransaction(final Message msg,
         final LocalTransactionExecuter localTransactionExecuter, final Object arg)
         throws MQClientException {
@@ -1283,17 +1302,21 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         Validators.checkMessage(msg, this.defaultMQProducer);
 
         SendResult sendResult = null;
+        // 标记消息是half消息
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_TRANSACTION_PREPARED, "true");
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_PRODUCER_GROUP, this.defaultMQProducer.getProducerGroup());
         try {
+            // 发送half消息，该方法是同步发送，事务消息也必须是同步发送
             sendResult = this.send(msg);
         } catch (Exception e) {
             throw new MQClientException("send message Exception", e);
         }
 
+        // 本地事物未提交前，事物状态为unknow未知状态
         LocalTransactionState localTransactionState = LocalTransactionState.UNKNOW;
         Throwable localException = null;
         switch (sendResult.getSendStatus()) {
+            // 只有在half消息发送成功的时候才会执行事务
             case SEND_OK: {
                 try {
                     if (sendResult.getTransactionId() != null) {
@@ -1303,6 +1326,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     if (null != transactionId && !"".equals(transactionId)) {
                         msg.setTransactionId(transactionId);
                     }
+                    // 执行本地事务
                     if (null != localTransactionExecuter) {
                         localTransactionState = localTransactionExecuter.executeLocalTransactionBranch(msg, arg);
                     } else if (transactionListener != null) {
@@ -1334,6 +1358,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         }
 
         try {
+            // 根据事务commit的情况来判断下一步操作
             this.endTransaction(sendResult, localTransactionState, localException);
         } catch (Exception e) {
             log.warn("local transaction execute " + localTransactionState + ", but end broker transaction failed", e);
@@ -1357,11 +1382,25 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         return send(msg, this.defaultMQProducer.getSendMsgTimeout());
     }
 
+    /**
+     * @Description: producer结束事务
+     *
+     * producer根据half消息发送结果和事务执行结果来处理事务——commit或者rollback。
+     * 从上面发送消息的代码可以看到最后调用了endTransaction来处理事务执行结果，
+     * 这个方法里面就是将事务执行的结果通过消息发送给broker，由broker决定消息是否投递。
+     *
+     * @date 2020/10/18 下午11:09
+     * @param sendResult
+     * @param localTransactionState
+     * @param localException
+     * @return void
+     */
     public void endTransaction(
         final SendResult sendResult,
         final LocalTransactionState localTransactionState,
         final Throwable localException) throws RemotingException, MQBrokerException, InterruptedException, UnknownHostException {
         final MessageId id;
+        // 从broker返回的信息中获取half消息的offset
         if (sendResult.getOffsetMsgId() != null) {
             id = MessageDecoder.decodeMessageId(sendResult.getOffsetMsgId());
         } else {
@@ -1369,17 +1408,23 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         }
         String transactionId = sendResult.getTransactionId();
         final String brokerAddr = this.mQClientFactory.findBrokerAddressInPublish(sendResult.getMessageQueue().getBrokerName());
+        // 需要把transactionId和offset发送给broker，便于broker查找half消息
         EndTransactionRequestHeader requestHeader = new EndTransactionRequestHeader();
         requestHeader.setTransactionId(transactionId);
         requestHeader.setCommitLogOffset(id.getOffset());
         switch (localTransactionState) {
             case COMMIT_MESSAGE:
+                // 表明本地址事务成功commit，告诉broker可以提交事务
                 requestHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_COMMIT_TYPE);
                 break;
             case ROLLBACK_MESSAGE:
+                // 说明事物需要回滚，有可能是half消息发送失败，也有可能是本地事务执行失败
                 requestHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_ROLLBACK_TYPE);
                 break;
             case UNKNOW:
+                // 如果状态是UNKNOW，broker还会反查producer，
+                // 也就是接口：org.apache.rocketmq.example.transaction.TransactionCheckListenerImpl#checkLocalTransactionState的作用，
+                // 但是目前rmq4.2.0并没有向producer查询，也就是源码中都没有调用这个接口
                 requestHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_NOT_TYPE);
                 break;
             default:
@@ -1390,6 +1435,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         requestHeader.setTranStateTableOffset(sendResult.getQueueOffset());
         requestHeader.setMsgId(sendResult.getMsgId());
         String remark = localException != null ? ("executeLocalTransactionBranch exception: " + localException.toString()) : null;
+        // 这个发送消息是onway的，也就是不会等待返回
         this.mQClientFactory.getMQClientAPIImpl().endTransactionOneway(brokerAddr, requestHeader, remark,
             this.defaultMQProducer.getSendMsgTimeout());
     }

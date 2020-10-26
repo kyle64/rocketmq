@@ -1838,6 +1838,10 @@ public class CommitLog {
             // 若是PREPARED事务，则将TransactionStateService.tranStateTableOffset变量值加1，
             // 该变量值表示在statetable文件中的消息个数；
             switch (tranType) {
+                // broker在将消息写入CommitLog的时候会判断消息类型，
+                // 如果是是prepare或者rollback消息，
+                // ConsumeQueue的offset（每个消息对应ConsumeQueue中的一个数据结构（包含topic、tag的hashCode、消息对应CommitLog的物理offset），offset表示数据结构是第几个）
+                // 不会增加
                 case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
                 case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
                     break;

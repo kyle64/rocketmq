@@ -1640,6 +1640,9 @@ public class DefaultMessageStore implements MessageStore {
         public void dispatch(DispatchRequest request) {
             final int tranType = MessageSysFlag.getTransactionValue(request.getSysFlag());
             switch (tranType) {
+                // broker在构造ConsumeQueue的时候会判断是否是prepare或者rollback消息，
+                // 如果是这两种中的一种则不会将该消息放入ConsumeQueue，
+                // consumer在拉取消息的时候也就不会拉取到prepare和rollback的消息。
                 case MessageSysFlag.TRANSACTION_NOT_TYPE:
                 case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
                     DefaultMessageStore.this.putMessagePositionInfo(request);
